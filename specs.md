@@ -45,7 +45,7 @@ below, once we get there:
   since visitors are pointing the app at content to index, not necessarily
   uploading local files.
 
-## 1. High-level pipeline
+## 1. High-level pipeline (query-time)
 
 ```
 User Query
@@ -90,9 +90,178 @@ User Query
          [Output Guardrails] ──▶ best-effort response + low-confidence notice
 ```
 
-## 2. Components
+This is the *query-time* flow — it assumes the vector DB already has content
+in it. §2 covers how content gets there.
 
-### 2.1 Input Guardrails (`lib/guardrails/input.ts`)
+## 2. Ingestion pipeline (upload/index-time)
+
+A separate, asynchronous pipeline from §1 — it runs when a visitor adds a
+source to the index, not when they ask a question. Supported source types:
+**PDF, Markdown, SRT, VTT, YouTube link, web page URL.**
+
+```
+Source (file upload or URL)
+   │
+   ▼
+[Source Loader] — one per source type, normalizes into a common shape:
+   ├─ PDF          → plain text
+   ├─ Markdown     → plain text
+   ├─ SRT          → timed cues { start, end, text }
+   ├─ VTT          → timed cues (shares cue-parsing core with SRT)
+   ├─ YouTube link → fetch caption track → timed cues (same shape as SRT/VTT)
+   └─ Web page URL → fetch HTML → extract main content → plain text
+   │
+   ▼
+[Chunker] — strategy depends on the loader's output shape:
+   ├─ plain text  → character/token-budget chunking, with overlap
+   └─ timed cues  → time-window chunking (~30–60s per chunk, keeps start/end)
+   │
+   ▼
+[Embed] — each chunk embedded via the embedding model (`openAIEmbed`)
+   │
+   ▼
+[Upsert] — chunk + embedding + metadata → vector DB (Qdrant Cloud)
+```
+
+### 2.1 Source loaders (`lib/ingestion/loaders/`)
+One loader per source type, all implementing a common interface:
+
+```ts
+type LoadedDocument =
+  | { kind: "text"; text: string }
+  | { kind: "timed"; cues: { start: number; end: number; text: string }[] };
+
+interface SourceLoader {
+  type: "pdf" | "markdown" | "srt" | "vtt" | "youtube" | "webpage";
+  load(input: { file?: File; url?: string }): Promise<LoadedDocument>;
+}
+```
+
+- `pdf.ts` / `markdown.ts` / `webpage.ts` → `{ kind: "text" }`. The web page
+  loader needs readability-style extraction (strip nav/ads/scripts/
+  boilerplate) before the HTML is chunk-worthy — a raw DOM dump is not plain
+  text.
+- `srt.ts` / `vtt.ts` → `{ kind: "timed" }`. SRT and VTT are near-identical
+  cue formats (VTT adds a `WEBVTT` header and uses `.` instead of `,` in
+  timestamps) — share one cue-parsing core with a thin per-format
+  normalization step, not two independent parsers.
+- `youtube.ts` → `{ kind: "timed" }`. Fetches the video's existing caption
+  track (not the audio/video itself) and reuses the exact same cue shape as
+  SRT/VTT, so it reuses the same time-window chunker rather than needing its
+  own.
+
+### 2.2 Chunking (`lib/ingestion/chunkers/`)
+- **Time-window chunking** (SRT/VTT/YouTube) — merge consecutive cues into
+  ~30–60s windows, concatenating their text, keeping the window's `start`/
+  `end` as chunk metadata. The point: retrieval can cite "around 2:15" for a
+  transcript source, which only survives if chunking preserves real
+  timestamps rather than chunking by raw character count.
+- **Character/token-budget chunking** (PDF/Markdown/web page) — standard
+  fixed-size chunking with overlap; no inherent timestamp concept for these
+  source types.
+
+### 2.3 Metadata
+Every ingested chunk carries at minimum `{ sourceType, sourceId, chunkIndex }`
+(`sourceId` is the file name or source URL), plus `{ startTime, endTime }` for
+chunks that came from a timed source. This flows straight into
+`RetrievedDoc.metadata` (§6 Data model) so ranking/citation can use it later,
+and is exactly what §3's resource preview reconstructs a source's content
+from.
+
+### 2.4 Orchestration
+Per §5's orchestration decision, ingestion — not query-transform — is the
+pipeline stage that actually benefits from BullMQ: it can be long-running,
+benefits from per-chunk retries (one failed embed shouldn't lose an entire
+document), and doesn't need to block the visitor waiting on it. One BullMQ
+job per chunk (embed + upsert), fanned out from a parent ingestion job per
+source.
+
+## 3. Resources UI & citation preview
+
+A visitor needs to see what they've added and what state it's in, and later
+(once generation ships) needs to be able to click through from an answer's
+citation to the exact source material it came from. Both needs share one
+underlying model and one preview component — this section defines both.
+
+### 3.1 Resource lifecycle
+Every ingested source moves through a small state machine, tracked
+server-side and surfaced in the UI as it changes:
+
+```
+uploading → queued → processing → ready
+    │           │          │
+    └───────────┴──────────┴────────────▶ failed
+```
+
+- **uploading** — file bytes are still transferring from browser to server.
+  URL-based sources (YouTube, web page) skip this state entirely — there's
+  no file to transfer, just a URL string to hand off.
+- **queued** — server has the source; a `queue:ingestion` job exists,
+  waiting for the worker process to pick it up.
+- **processing** — the worker is actively running loader → chunker → embed
+  → upsert (§2) for this source.
+- **ready** — terminal success state. Fully indexed, searchable, and
+  available for retrieval and preview.
+- **failed** — terminal error state, reachable from any state above (bad
+  file, unreachable URL, a YouTube video with no captions available, an
+  embedding API error, etc.). Carries an error message and is retryable —
+  ingestion failures are common enough in practice (especially for
+  URL-based sources) that surfacing *why* and letting the visitor retry
+  matters more than a generic "failed" label would.
+
+The UI collapses this into three visible groups — **Queued** (uploading +
+queued together — from the visitor's point of view both just mean "not
+started processing yet"), **Processing**, and **Ready** — plus failed items
+surfaced with a red status dot wherever they'd otherwise sit, rather than a
+fourth always-visible group that's usually empty. Status is a colored dot
+(+ a spinner while active) next to each resource, not a text label:
+gray = queued, animated amber/blue = processing, green = ready, red = failed.
+
+Reflecting status changes as they happen requires the client to learn about
+them somehow, since ingestion runs in the separate worker process. Polling
+`GET /api/resources` while anything is `queued`/`processing`/`uploading`,
+stopping once everything's settled, is the pragmatic v1 approach — a push
+channel (SSE/WebSocket) would make updates feel instant but isn't justified
+at this scale yet. Revisit if the resource list grows large or latency to
+reflect a status change actually matters.
+
+### 3.2 Resources panel (`components/resources/`)
+A left-hand panel, visible alongside the chat and pipeline-trace columns,
+listing every resource added this session grouped by the three visible
+states from §3.1. Clicking any resource opens its preview (§3.3).
+
+### 3.3 Resource preview (shared with citation click-through)
+Clicking a resource opens its content in-app — a dialog or slide-over, never
+a download or a new tab. This is deliberately the *same component* that
+citation click-through will use later, once generation (§4.6) ships:
+clicking a citation in a CRAG-approved answer opens this exact preview,
+scrolled to and highlighting the specific chunk that was cited, not just
+"here's the whole document it came from."
+
+```ts
+interface ResourcePreviewTarget {
+  sourceId: string;
+  chunkId?: string; // set when opened from a citation — scroll/highlight this chunk
+}
+```
+
+Preview content is *reconstructed from the chunks already stored in the
+vector DB* — filter by `metadata.sourceId`, sort by `metadata.chunkIndex`,
+concatenate — rather than keeping a second copy of the raw document in a
+separate store. That's why §2.3's chunk metadata carries `sourceId` and
+`chunkIndex`: this preview and the future citation feature are both built on
+exactly that.
+
+Rendering differs by the source's original shape (§2.1):
+- **Plain-text sources** (PDF/Markdown/web page) — render the reconstructed
+  text, scrolled to the cited chunk's position when opened from a citation.
+- **Timed sources** (SRT/VTT/YouTube) — render as a transcript with visible
+  timestamps, scrolled to and highlighting the cited chunk's `startTime`–
+  `endTime` window when opened from a citation.
+
+## 4. Components (query-time)
+
+### 4.1 Input Guardrails (`lib/guardrails/input.ts`)
 Runs before any query transformation.
 - Block/flag prompt-injection and instruction-override attempts embedded in
   the user query.
@@ -106,9 +275,9 @@ Runs before any query transformation.
 - Implemented as a mini-LLM classifier plus deterministic pattern rules
   (defense in depth — don't rely on the LLM alone).
 
-### 2.2 Query Understanding — mini model (`lib/query-transform/`)
+### 4.2 Query Understanding — mini model (`lib/query-transform/`)
 Given the (guardrail-passed) query, produce a bounded set of transformed
-queries, run as parallel BullMQ jobs:
+queries:
 - `stepback.ts` — generates a more general/abstracted version of the query.
 - `rewrite.ts` — clarifies ambiguity, expands acronyms, normalizes phrasing.
 - `subquestions.ts` — decomposes multi-part questions into independent
@@ -116,10 +285,12 @@ queries, run as parallel BullMQ jobs:
 - `hyde.ts` — generates a hypothetical answer document, embedded and used as
   a retrieval query vector.
 
-All four run off a small/cheap model (see §2.7 Multi-LLM). Outputs are
-independent — no step depends on another's output.
+All four run off a small/cheap model (see §4.7 Multi-LLM), fanned out
+in-process via `Promise.allSettled` (`query-transform/index.ts`) — **not**
+BullMQ. See §5 Orchestration for why this stage is deliberately not queued.
+Outputs are independent — no step depends on another's output.
 
-### 2.3 Route Adaptor (`lib/retrieval/route-adaptor.ts`)
+### 4.3 Route Adaptor (`lib/retrieval/route-adaptor.ts`)
 Classifies each transformed query and selects which data source(s) to query:
 - Vector DB — semantic/unstructured content.
 - Keyword/full-text store — exact-match, code, IDs, names.
@@ -130,7 +301,7 @@ Routing decision is a mini-LLM classification (+ lightweight heuristics) over
 the query, returning one or more target adapters. Also the re-entry point for
 CRAG's keyword-feedback retry loop.
 
-### 2.4 Multi-DB Retrieval (`lib/retrieval/adapters/`)
+### 4.4 Multi-DB Retrieval (`lib/retrieval/adapters/`)
 One adapter per data source implementing a common interface:
 
 ```ts
@@ -147,7 +318,7 @@ credentials threaded per-request instead — not yet.)
 Adapters run in parallel per routed query. Each `RetrievedDoc` carries
 `{ id, content, source, sourceScore, metadata }`.
 
-### 2.5 Ranking (`lib/retrieval/ranker.ts`)
+### 4.5 Ranking (`lib/retrieval/ranker.ts`)
 Merges candidate docs across sources/queries and produces a single ranked
 list:
 - Normalize per-source scores onto a common scale.
@@ -157,11 +328,14 @@ list:
 - Truncate to top-K for context assembly (K configurable, token-budget
   aware).
 
-### 2.6 Generation (`lib/generation/generate.ts`)
+### 4.6 Generation (`lib/generation/generate.ts`)
 Main LLM call: original user query + top-K ranked context → response.
-Uses the "main" model tier (see §2.7), not the mini model.
+Uses the "main" model tier (see §4.7), not the mini model. Tracks which
+`RetrievedDoc.id`s actually contributed to the response, so the answer can
+carry citations pointing back to specific chunks — which is what §3.3's
+preview click-through opens against.
 
-### 2.7 Multi-LLM routing (`lib/llm/`)
+### 4.7 Multi-LLM routing (`lib/llm/`)
 Provider-agnostic layer with two model tiers, selected per pipeline stage:
 - **Mini tier** — guardrail classification, query transforms, route
   classification, CRAG scoring, keyword extraction, journaling. Optimized for
@@ -180,7 +354,7 @@ interface LLMProvider {
 on a specific vendor SDK. For now, keys come from `process.env`, same as the
 rest of the repo. (Future direction per §0: per-request BYOK — not yet.)
 
-### 2.8 CRAG evaluation (`lib/crag/evaluate.ts`)
+### 4.8 CRAG evaluation (`lib/crag/evaluate.ts`)
 Mini model scores the generated response against `{ original query, context
 used, response }` on a defined rubric (relevance, groundedness/faithfulness
 to context, completeness). Returns a numeric score + rationale.
@@ -191,7 +365,7 @@ to context, completeness). Returns a numeric score + rationale.
   through Output Guardrails, with a low-confidence flag rather than blocking
   the user entirely.
 
-### 2.9 CRAG journal (`lib/crag/journal.ts`)
+### 4.9 CRAG journal (`lib/crag/journal.ts`)
 On every failed attempt, the CRAG mini model records a structured entry:
 
 ```ts
@@ -208,7 +382,7 @@ Journal entries are attached to the pipeline job (BullMQ job data) for
 observability/debugging and optionally surfaced in the UI's pipeline trace
 view. Not shown to the end user by default.
 
-### 2.10 Output Guardrails (`lib/guardrails/output.ts`)
+### 4.10 Output Guardrails (`lib/guardrails/output.ts`)
 Runs on the final response before it's returned, regardless of which attempt
 produced it:
 - Prevent impersonation (system claiming to be a real person/authority it
@@ -222,12 +396,28 @@ produced it:
   refusal — never forward raw offending content to the user "for
   transparency."
 
-## 3. Orchestration — BullMQ
+## 5. Orchestration — BullMQ
 
-Each pipeline stage that talks to an LLM or an external DB is a BullMQ job so
-the pipeline is retryable, observable, and horizontally scalable:
-- `queue:query-transform` — fan-out job per transform (stepback/rewrite/
-  subquestions/HyDE).
+Not every stage that talks to an LLM or an external DB is a BullMQ job —
+queueing earns its cost when the producer doesn't need to wait around for the
+result. Two stages were evaluated against that bar this session:
+
+- **Query-transform (§4.2): deliberately *not* queued.** The API route still
+  has to synchronously await all four transforms before it can respond to
+  the user — there's no "fire and forget" here. Routing it through BullMQ
+  (tried, then reverted) only added Redis round-trip latency and a new
+  failure mode (`/api/chat` hanging if the worker process was down) with zero
+  benefit: no retry semantics beyond what `Promise.allSettled` already gave
+  it, no concurrency control needed at "4 calls per request", no scaling
+  benefit at this volume. Stays a plain in-process fan-out.
+- **Ingestion (§2.4): the actual right fit.** Long-running (can exceed a
+  request/serverless timeout entirely), doesn't need to block the visitor,
+  benefits genuinely from per-chunk retries and rate-limiting on embedding
+  calls. This is where BullMQ earns its complexity.
+
+Queues:
+- `queue:ingestion` — one job per chunk (embed + upsert), fanned out from a
+  parent ingestion job per source (§2.4).
 - `queue:retrieval` — one job per routed (query, adapter) pair.
 - `queue:ranking` — single job, depends on all retrieval jobs for that
   request.
@@ -239,9 +429,10 @@ the pipeline is retryable, observable, and horizontally scalable:
 A parent "pipeline" job (or BullMQ flow) tracks overall request state and
 attempt count. Redis is the queue backend; connection config lives in
 `lib/queue/connection.ts`. Workers run as a standalone process (`workers/`),
-not inside Next.js request handlers.
+not inside Next.js request handlers — which also means anything routed
+through a queue only works while `npm run worker` is running.
 
-## 4. Data model (indicative)
+## 6. Data model (indicative)
 
 ```ts
 interface TransformedQuery {
@@ -255,7 +446,7 @@ interface RetrievedDoc {
   content: string;
   source: string;
   sourceScore: number;
-  metadata: Record<string, unknown>;
+  metadata: Record<string, unknown>; // see §2.3 for what ingestion puts here
 }
 
 interface PipelineRequest {
@@ -271,10 +462,10 @@ interface PipelineRequest {
 }
 ```
 
-## 5. Non-functional requirements
+## 7. Non-functional requirements
 - Max 3 total generation attempts per request (hard cap, enforced by the
   pipeline job, not just by convention).
-- All LLM/DB provider access goes through the interfaces in §2.3/§2.4/§2.7 —
+- All LLM/DB provider access goes through the interfaces in §4.3/§4.4/§4.7 —
   no direct vendor SDK calls from route handlers or UI code.
 - Guardrail checks are mandatory on both ends of the pipeline and cannot be
   disabled via config/env in production.

@@ -55,9 +55,9 @@ export function TerminalPanel({ lines }: TerminalPanelProps) {
             </p>
           )}
           {lines.map((line) => (
-            <div key={line.id} className="flex items-center gap-2">
+            <div key={line.id} className="flex min-w-0 items-center gap-2">
               <span className="shrink-0 text-zinc-600">[{line.timestamp}]</span>
-              {statusIcon[line.status]}
+              <span className="shrink-0">{statusIcon[line.status]}</span>
               <span
                 className={cn(
                   "shrink-0",
@@ -72,7 +72,7 @@ export function TerminalPanel({ lines }: TerminalPanelProps) {
               {line.detail && (
                 <span
                   className={cn(
-                    "truncate",
+                    "min-w-0 flex-1 truncate",
                     line.status === "blocked" ? "text-red-400/80" : "text-zinc-500"
                   )}
                 >

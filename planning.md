@@ -10,13 +10,19 @@ until a phase's feature is fully working end-to-end).
 app/
   api/
     query/route.ts            # POST: accepts user query, enqueues pipeline job
-    query/[id]/route.ts       # GET: poll/stream pipeline status + result
+    ingest/route.ts            # POST: accepts a file or URL, creates a resource,
+                                # enqueues the ingest-source job [Phase 4 ✅]
+    resources/route.ts        # GET: resource list + status, for panel polling [✅]
+    resources/[id]/route.ts    # GET: resource + reconstructed chunks for preview [✅]
   page.tsx                    # chat/query UI
   layout.tsx
 components/
   ui/                         # shadcn components only — installed via CLI
   chat/                       # feature components (message list, input, etc.)
   pipeline-trace/             # optional: visualizes CRAG journal / route decisions
+  resources/
+    resource-panel.tsx        # left-hand grouped list (queued/processing/ready)
+    resource-preview.tsx       # dialog/slide-over, shared with citation click-through
 lib/
   guardrails/
     input.ts
@@ -33,7 +39,19 @@ lib/
     rewrite.ts
     subquestions.ts
     hyde.ts
-    index.ts                  # fan-out orchestration
+    index.ts                  # fan-out orchestration (Promise.allSettled, not BullMQ)
+  ingestion/
+    types.ts                  # SourceLoader interface, LoadedDocument union
+    loaders/
+      pdf.ts
+      markdown.ts
+      srt.ts
+      vtt.ts                   # shares cue-parsing core with srt.ts
+      youtube.ts                # fetches captions, reuses SRT/VTT cue shape
+      webpage.ts                # fetch + readability-style extraction
+    chunkers/
+      time-window.ts            # for timed cues (SRT/VTT/YouTube)
+      token-budget.ts            # for plain text (PDF/Markdown/webpage)
   retrieval/
     route-adaptor.ts
     adapters/
@@ -51,7 +69,7 @@ lib/
     journal.ts
   queue/
     connection.ts              # Redis connection for BullMQ
-    queues.ts                  # queue definitions
+    queues.ts                  # queue definitions (ingest-source, ingest-chunk, ...) [✅]
     flow.ts                    # BullMQ flow wiring the stages together
   db/
     clients/                   # DB client singletons per data source
@@ -60,7 +78,8 @@ lib/
 workers/
   index.ts                     # standalone worker process entrypoint
   processors/
-    query-transform.processor.ts
+    ingest-source.processor.ts # [✅] parent job: load -> chunk -> fan out children
+    ingest-chunk.processor.ts  # [✅] child job: embed + upsert one chunk
     retrieval.processor.ts
     ranking.processor.ts
     generation.processor.ts
@@ -76,7 +95,7 @@ CLAUDE.md
 - Add BullMQ + Redis client deps; `lib/queue/connection.ts`.
 - Stand up `workers/index.ts` as a separate runnable process
   (`npm run worker`, or similar script alongside `dev`/`build`/`start`).
-- Define shared types in `lib/types.ts` (mirrors `specs.md` §4).
+- Define shared types in `lib/types.ts` (mirrors `specs.md` §6).
 - Env var plumbing for Redis URL, LLM API keys, DB connection strings —
   document required vars in `.env.example`.
 
@@ -99,28 +118,97 @@ CLAUDE.md
 
 ## Phase 3 — Query understanding (mini model)
 - Implement `stepback.ts`, `rewrite.ts`, `subquestions.ts`, `hyde.ts`.
-- `query-transform/index.ts` fans these out as parallel BullMQ jobs
-  (`queue:query-transform`) and collects results into
-  `TransformedQuery[]`.
+- `query-transform/index.ts` fans these out in-process via
+  `Promise.allSettled` and collects results into `TransformedQuery[]`.
+  Deliberately **not** BullMQ — see `specs.md` §5 for why this stage doesn't
+  benefit from queueing (tried, then reverted).
 
-## Phase 4 — Route adaptor + multi-DB retrieval
+## Phase 4 — Ingestion ✅ implemented
+- `lib/ingestion/types.ts`: `SourceLoader` interface + `LoadedDocument` union
+  (`text` vs `timed` cues) — see `specs.md` §2. One deviation from the spec's
+  literal interface: loaders take `{ fileBuffer?: Buffer; fileName?: string;
+  url?: string }`, not a raw `File` — a browser `File` can't survive BullMQ's
+  JSON job-data serialization, so `app/api/ingest/route.ts` reads the upload
+  into a `Buffer` (base64 in job data) before handing it to the worker.
+- Source loaders (`lib/ingestion/loaders/`): `pdf.ts` (via `unpdf`),
+  `markdown.ts`, `srt.ts`/`vtt.ts` (share `cues.ts`'s cue-parsing core),
+  `youtube.ts` (via the `youtube-transcript` package, reuses the SRT/VTT cue
+  shape), `webpage.ts` (`fetch` + `@mozilla/readability`/`jsdom`).
+- Chunkers (`lib/ingestion/chunkers/`): `time-window.ts` (~45s windows) and
+  `token-budget.ts` (1200-char budget, 150-char overlap).
+- `lib/db/qdrant.ts`: Qdrant client singleton, collection auto-create +
+  payload index on `sourceId` (Qdrant Cloud requires an explicit index
+  before a field can be used in a scroll/search filter — found this live
+  during testing), `upsertChunk`, `fetchChunksBySource`.
+- `lib/ingestion/resource-store.ts`: resource lifecycle state lives in Redis
+  (same instance BullMQ already uses) — one JSON blob per resource id plus a
+  sorted-set index, resolving the "where does lifecycle state live" open
+  decision below in favor of not standing up a new store.
+- Queues are named `ingest-source` (parent: load + chunk, then fans out
+  children) and `ingest-chunk` (child: embed + upsert one chunk, `attempts:
+  3` with exponential backoff) rather than a single `queue:ingestion` —
+  `workers/processors/ingest-source.processor.ts` uses BullMQ's manual
+  parent/children pattern (`job.moveToWaitingChildren` + `WaitingChildrenError`)
+  since the child count isn't known until after loading/chunking runs.
+  Verified live: a transient Qdrant collection-creation race under
+  concurrent chunk jobs threw once and was auto-retried successfully —
+  exactly the per-chunk retry behavior this architecture was built for.
+- `app/api/ingest/route.ts`: `POST`, multipart (file kinds) or JSON (URL
+  kinds), creates the resource record and enqueues the parent job.
+- `app/api/resources/route.ts` / `app/api/resources/[id]/route.ts`: list +
+  single-resource-with-reconstructed-chunks, for the panel (Phase 5).
+- Verified live against one real source of each type: PDF, Markdown, SRT,
+  web page (including the failure path — an unreachable URL correctly lands
+  in `failed` with an error message). YouTube loader is implemented but not
+  yet verified against a real video in this pass.
+
+## Phase 5 — Resources panel & preview ✅ implemented
+- `components/resources/resource-panel.tsx`: left-hand panel, polls
+  `GET /api/resources` while anything is unsettled, groups resources into
+  the three visible states from `specs.md` §3.1 (Queued, Processing, Ready).
+  Failed resources are surfaced inside the **Processing** group with a red
+  dot (a concrete resolution of "wherever they'd otherwise sit" — we don't
+  track which state a resource failed from, and most failures happen
+  mid-processing anyway).
+- `components/resources/resource-preview.tsx`: dialog opened on click,
+  reconstructs content from stored chunks (filter by `sourceId`, sort by
+  `chunkIndex`) — plain-text render for PDF/Markdown/web page, timestamped
+  transcript render for SRT/VTT/YouTube. Accepts an optional `chunkId` to
+  scroll to/highlight, since citation click-through (Phase 8) will reuse
+  this exact component.
+- `app/page.tsx` layout: three-column grid (Resources | Chat | pipeline
+  trace); `IngestPanel` no longer holds its own local source list — it
+  triggers real uploads to `/api/ingest` and bumps a `refreshSignal` so the
+  resources panel refetches immediately instead of waiting for its next
+  poll tick.
+- Verified live in-browser: uploading a file shows a per-card spinner, the
+  resource appears in the panel within one refresh, and clicking a ready
+  resource opens the correct preview (plain text and timestamped transcript
+  both confirmed).
+
+## Phase 6 — Route adaptor + multi-DB retrieval
 - Define `RetrievalAdapter` interface; implement vector DB adapter first
-  (minimum viable retrieval), then keyword/SQL/graph adapters.
+  (minimum viable retrieval, against Qdrant Cloud — real ingested data from
+  Phase 4, not a hand-seeded fixture), then keyword/SQL/graph adapters.
 - `route-adaptor.ts`: mini-model + heuristic classification from
   `TransformedQuery` → adapter selection.
 - `queue:retrieval` jobs, one per (query, adapter) pair, run in parallel.
 
-## Phase 5 — Ranking
+## Phase 7 — Ranking
 - `ranker.ts`: score normalization across sources, de-dup, re-rank against
   the *original* query, truncate to token-budget-aware top-K.
 - `queue:ranking` job depends on all retrieval jobs for the request
   (BullMQ flow parent/children).
 
-## Phase 6 — Generation
+## Phase 8 — Generation
 - `generate.ts`: main-tier LLM call with original query + top-K context.
+- Track which `RetrievedDoc.id`s contributed to the response so it can carry
+  citations (`specs.md` §4.6) — wire citation click-through in the chat UI to
+  open `components/resources/resource-preview.tsx` (from Phase 5) with the
+  cited chunk, rather than building a second preview surface.
 - `queue:generation` job.
 
-## Phase 7 — CRAG self-correction loop
+## Phase 9 — CRAG self-correction loop
 - `evaluate.ts`: mini-model scoring rubric (relevance, groundedness,
   completeness) against `{ query, context, response }`.
 - `keywords.ts`: keyword extraction from failing response/context for
@@ -131,25 +219,30 @@ CLAUDE.md
   adaptor and re-run retrieval → ranking → generation → eval, capped at 3
   total attempts. On exhaustion, return the best-scoring attempt.
 
-## Phase 8 — Output guardrails
+## Phase 10 — Output guardrails
 - `lib/guardrails/output.ts`: same categories as input (impersonation,
   unauthorized access, sensitive info leakage) applied to the final response,
   including content that arrived via retrieved documents.
 - Terminal `queue:output-guardrails` job; this is what `app/api/query/[id]`
   ultimately returns to the client.
 
-## Phase 9 — UI
+## Phase 11 — UI polish
 - Query input + streaming/polling result view (`app/page.tsx`,
   `components/chat/`) using shadcn components per `AGENTS.md` §1.
 - Optional: `components/pipeline-trace/` to visualize route decisions and
   CRAG journal entries for debugging (dev-only surface, not shown to normal
-  end users per `specs.md` §2.9).
+  end users per `specs.md` §4.9).
+- By this phase the ingestion source grid (built earlier) and resources
+  panel/preview (Phase 5) already exist — this phase is about the overall
+  layout coming together (ingestion + resources panel + chat + trace), not
+  building new upload/resource surfaces from scratch.
 
-## Phase 10 — Testing
-- Only after Phases 0–9 work end-to-end for a real query. Cover: guardrail
-  block/pass cases, route-adaptor classification, ranker merge/de-dup
-  correctness, CRAG retry-loop attempt-cap enforcement, output guardrail
-  redaction.
+## Phase 12 — Testing
+- Only after Phases 0–11 work end-to-end for a real query. Cover: guardrail
+  block/pass cases, ingestion loader/chunker correctness per source type,
+  resource lifecycle state transitions (including failure + retry),
+  route-adaptor classification, ranker merge/de-dup correctness, CRAG
+  retry-loop attempt-cap enforcement, output guardrail redaction.
 
 ## Open decisions to confirm before/while implementing
 - Which concrete LLM providers for mini vs main tier.
@@ -159,6 +252,19 @@ CLAUDE.md
   same pattern as `OPENAI_API_KEY`.
 - CRAG score threshold and rubric weighting.
 - Whether the pipeline trace/journal UI ships in v1 or is deferred.
+- ~~Web page loader's readability/extraction approach~~ — resolved:
+  `@mozilla/readability` + `jsdom`.
+- ~~YouTube caption fetching approach~~ — resolved: the `youtube-transcript`
+  package; not yet verified against a real video (see Phase 4 notes).
+- ~~Where per-resource lifecycle state lives~~ — resolved: Redis (same
+  instance BullMQ already uses), one JSON blob per resource id.
+- Resource status delivery: polling `GET /api/resources` (assumed for v1,
+  `specs.md` §3.1) vs. a push channel (SSE/WebSocket) — revisit only if
+  polling proves too slow/heavy in practice. Still open.
+- No delete/retry action on a resource yet (not requested) — a `failed`
+  resource's error is visible via tooltip but there's no way to retry
+  ingestion or remove a resource from the panel without going to Redis
+  directly. Revisit if that friction shows up in practice.
 
 ## Future direction (deferred — not being built yet)
 Current priority is learning/building the pipeline end-to-end; the following
@@ -173,8 +279,6 @@ current work:
   Would need either inline orchestration (current approach) to keep scaling,
   or a serverless-native job runner (Inngest, Trigger.dev, Vercel background
   functions).
-- URL-based ingestion (fetch + extract + chunk), alongside/instead of file
-  upload.
 - `lib/llm/providers/openai.ts`'s client moving from a process-env-keyed
   singleton to a per-request client built from a visitor-supplied key.
 

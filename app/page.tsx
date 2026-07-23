@@ -8,7 +8,12 @@ import {
   TerminalPanel,
   type TraceLine,
 } from "@/components/pipeline-trace/terminal-panel"
-import { PdfDropzone, type UploadedFile } from "@/components/upload/pdf-dropzone"
+import { IngestPanel } from "@/components/upload/ingest-panel"
+import { ResourcePanel } from "@/components/resources/resource-panel"
+import {
+  ResourcePreview,
+  type ResourcePreviewTarget,
+} from "@/components/resources/resource-preview"
 
 const PIPELINE_STAGES = [
   "input-guardrails",
@@ -31,11 +36,12 @@ export default function Home() {
       id: "welcome",
       role: "assistant",
       content:
-        "Upload a few PDFs above, then ask a question. This is a UI preview — the retrieval pipeline isn't wired up yet.",
+        "Add a few sources above — PDFs, Markdown, subtitles, a YouTube link, or a web page — then ask a question. This is a UI preview — the retrieval pipeline isn't wired up yet.",
     },
   ])
-  const [files, setFiles] = React.useState<UploadedFile[]>([])
   const [lines, setLines] = React.useState<TraceLine[]>([])
+  const [resourceRefreshSignal, setResourceRefreshSignal] = React.useState(0)
+  const [previewTarget, setPreviewTarget] = React.useState<ResourcePreviewTarget | null>(null)
   const timeouts = React.useRef<ReturnType<typeof setTimeout>[]>([])
 
   React.useEffect(() => {
@@ -44,21 +50,6 @@ export default function Home() {
       pending.forEach(clearTimeout)
     }
   }, [])
-
-  function handleFilesAdded(newFiles: File[]) {
-    setFiles((prev) => [
-      ...prev,
-      ...newFiles.map((file) => ({
-        id: `${file.name}-${file.size}-${Date.now()}`,
-        name: file.name,
-        size: file.size,
-      })),
-    ])
-  }
-
-  function handleFileRemoved(id: string) {
-    setFiles((prev) => prev.filter((file) => file.id !== id))
-  }
 
   function updateLine(runId: number, stage: string, patch: Partial<TraceLine>) {
     setLines((prev) =>
@@ -205,7 +196,7 @@ export default function Home() {
         <div>
           <h1 className="text-lg font-semibold">Advanced RAG</h1>
           <p className="text-sm text-muted-foreground">
-            Upload source PDFs, ask a question, and watch the retrieval
+            Add source documents, ask a question, and watch the retrieval
             pipeline run.
           </p>
         </div>
@@ -213,21 +204,30 @@ export default function Home() {
       </header>
 
       <section className="rounded-xl border border-border bg-card p-4">
-        <PdfDropzone
-          files={files}
-          onFilesAdded={handleFilesAdded}
-          onFileRemoved={handleFileRemoved}
-        />
+        <IngestPanel onIngested={() => setResourceRefreshSignal((n) => n + 1)} />
       </section>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 md:grid-cols-2">
-        <section className="min-h-0 overflow-hidden rounded-xl border border-border bg-card">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 md:grid-cols-[220px_minmax(0,1fr)_minmax(0,1fr)]">
+        <section className="min-h-0 min-w-0 overflow-hidden rounded-xl border border-border bg-card">
+          <ResourcePanel
+            refreshSignal={resourceRefreshSignal}
+            onSelect={(resourceId) => setPreviewTarget({ sourceId: resourceId })}
+          />
+        </section>
+        <section className="min-h-0 min-w-0 overflow-hidden rounded-xl border border-border bg-card">
           <ChatPanel messages={messages} onSendMessage={handleSendMessage} />
         </section>
-        <section className="min-h-0">
+        <section className="min-h-0 min-w-0">
           <TerminalPanel lines={lines} />
         </section>
       </div>
+
+      <ResourcePreview
+        target={previewTarget}
+        onOpenChange={(open) => {
+          if (!open) setPreviewTarget(null)
+        }}
+      />
     </div>
   )
 }
