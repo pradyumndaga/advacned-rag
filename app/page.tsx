@@ -77,6 +77,7 @@ export default function Home() {
       rankingStage,
       generationStage,
       cragStage,
+      outputGuardrailStage,
       ...restStages
     ] = PIPELINE_STAGES
 
@@ -112,6 +113,7 @@ export default function Home() {
       retrieval?: { count: number; sources: string[] }
       ranking?: { candidates: number; ranked: number }
       crag?: { attempts: number; score: number; lowConfidence: boolean }
+      outputGuardrail?: { action: "none" | "redacted" | "refused"; reason?: string }
       citations?: Citation[]
     }
     try {
@@ -217,6 +219,13 @@ export default function Home() {
         detail: data.crag
           ? `score ${data.crag.score.toFixed(2)}/1.00, ${data.crag.attempts} attempt${data.crag.attempts > 1 ? "s" : ""}${data.crag.lowConfidence ? " — low confidence" : ""}`
           : "no evaluation",
+        timestamp: timestamp(),
+      },
+      {
+        id: `${runId}-${outputGuardrailStage}`,
+        label: outputGuardrailStage,
+        status: data.outputGuardrail?.action === "refused" ? "blocked" : "done",
+        detail: data.outputGuardrail?.reason ?? "no changes needed",
         timestamp: timestamp(),
       },
     ])

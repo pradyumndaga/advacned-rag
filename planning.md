@@ -80,11 +80,11 @@ workers/
   processors/
     ingest-source.processor.ts # [✅] parent job: load -> chunk -> fan out children
     ingest-chunk.processor.ts  # [✅] child job: embed + upsert one chunk
-    retrieval.processor.ts
-    ranking.processor.ts
-    generation.processor.ts
-    crag-eval.processor.ts
-    output-guardrails.processor.ts
+    # retrieval/ranking/generation/crag-eval/output-guardrails have no
+    # processor files — none of them turned out to benefit from BullMQ
+    # (specs.md §5), so they're plain modules called directly from
+    # app/api/chat/route.ts instead: lib/retrieval/, lib/generation/,
+    # lib/crag/, lib/guardrails/.
 specs.md
 planning.md
 AGENTS.md
@@ -330,12 +330,54 @@ Reuses a new shared `SOURCE_ICONS` map (`components/resources/
 source-icon.tsx`) extracted out of `resource-panel.tsx` rather than
 duplicating the source-type → icon mapping in both places.
 
-## Phase 10 — Output guardrails
-- `lib/guardrails/output.ts`: same categories as input (impersonation,
-  unauthorized access, sensitive info leakage) applied to the final response,
-  including content that arrived via retrieved documents.
-- Terminal `queue:output-guardrails` job; this is what `app/api/query/[id]`
-  ultimately returns to the client.
+## Phase 10 — Output guardrails ✅ implemented
+- `lib/guardrails/classifier.ts`: extracted `parseClassifierResponse` shared
+  by both `input.ts` and `output.ts` (was duplicated identically in both —
+  same real-duplication-only rationale as the earlier `SOURCE_ICONS`
+  extraction).
+- `lib/guardrails/output.ts` — three layers, applied in order:
+  1. **Deterministic secret redaction** — regex patterns for credential-
+     shaped strings (OpenAI-style keys, AWS keys, PEM private key blocks,
+     connection strings with embedded creds, generic `key: value` /
+     `password: value` patterns) plus an exact-match check against this
+     app's own configured secrets (`OPENAI_API_KEY`, `QDRANT_API_KEY`,
+     `REDIS_URL`). Matches generically, not just this app's own secrets —
+     a credential could in principle arrive via an ingested document.
+     Always applied first, regardless of what happens next.
+  2. **Deterministic refusal-trigger rules** — phrase patterns for the
+     *assistant* claiming an identity/authority ("I am the administrator")
+     or granting access ("I'll bypass..."). Distinct from `input.ts`'s
+     rules, which catch the *user* asking for these things, not the
+     *assistant* producing them. Falls back to a full safe-refusal message
+     rather than redacting a substring, since these can't be cleanly
+     excised without leaving a broken sentence.
+  3. **Mini-LLM classifier**, defense in depth, explicitly instructed that
+     quoting the user's own indexed document content — including personal
+     details like names, emails, phone numbers — is normal and must be
+     accepted; only impersonation/unauthorized-access/credential-leakage
+     get rejected. Fails closed (full refusal) on an unreachable or
+     unparseable classifier response, same as input guardrails, since this
+     one *is* security-critical.
+- Returns `{ content, action: "none" | "redacted" | "refused", reason? }` —
+  the API only skips building citations when `action === "refused"` (a
+  refusal message has nothing for a `[N]` marker to point at); a redacted
+  response keeps its citations intact.
+- **Not queued** (no `queue:output-guardrails`) — same reasoning as every
+  other query-time stage: the chat route awaits it directly.
+- Wired into `app/api/chat/route.ts` as the true final step (after CRAG);
+  surfaced as a real `output-guardrails` trace line.
+- Verified via three isolated cases (a small standalone script, since
+  reliably getting the LLM to naturally emit a real secret through the full
+  pipeline isn't practical to force): a benign query passed untouched
+  (`action: "none"`); a secret-key-shaped string, framed as "here's your
+  key: ...", was refused (both the regex *and* the classifier independently
+  flagged it — the classifier catches the surrounding "sharing a
+  credential" framing even after the raw key string is redacted); the same
+  key string in a benign "example config value" framing was precisely
+  redacted (`action: "redacted"`) without a full refusal; and real PII from
+  the user's own uploaded document (name/phone/email) correctly passed
+  through untouched, confirming the guardrail doesn't defeat the app's own
+  purpose.
 
 ## Phase 11 — UI polish
 - Query input + streaming/polling result view (`app/page.tsx`,

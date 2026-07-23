@@ -420,9 +420,9 @@ score, plus a one-sentence rationale.
   had their shot.
 - After 3 failed attempts: return the best-scoring response of the three
   (not necessarily the last one), with a `lowConfidence` flag. Output
-  Guardrails (§4.10) still runs on it — not yet built, so it currently
-  reaches the client directly with that flag attached; the chat UI shows a
-  small low-confidence notice rather than hiding the issue.
+  Guardrails (§4.10) still runs on it regardless; the flag reaches the
+  client alongside whatever the guardrail did to the content, and the chat
+  UI shows a small low-confidence notice rather than hiding the issue.
 
 ### 4.9 CRAG journal (`lib/crag/journal.ts`)
 On every failed attempt, the CRAG mini model records a structured entry:
@@ -448,17 +448,33 @@ diagnostic detail in the rest of the journal.
 
 ### 4.10 Output Guardrails (`lib/guardrails/output.ts`)
 Runs on the final response before it's returned, regardless of which attempt
-produced it:
-- Prevent impersonation (system claiming to be a real person/authority it
-  isn't).
-- Prevent statements or instructions that would grant/imply unauthorized
-  access.
-- Redact/block leakage of secrets, credentials, internal system details, or
-  PII that shouldn't be exposed, including anything surfaced via retrieved
-  documents.
-- On violation: strip/replace the offending content or fall back to a safe
-  refusal — never forward raw offending content to the user "for
-  transparency."
+produced it. Three layers, in order:
+1. **Deterministic secret redaction** — credential-shaped patterns (API
+   keys, AWS keys, PEM private key blocks, connection strings with embedded
+   creds, generic `key: value` assignments) plus an exact-match check
+   against this app's own configured secrets. Applied unconditionally,
+   before anything else.
+2. **Deterministic refusal-trigger rules** — the *assistant* claiming an
+   identity/authority it doesn't have, or granting/implying unauthorized
+   access. (Distinct from `lib/guardrails/input.ts`'s rules, which catch
+   the *user* asking for these things.)
+3. **Mini-LLM classifier**, defense in depth — explicitly instructed that
+   quoting the user's own indexed documents (including personal details
+   like names, emails, phone numbers) is normal and expected; only
+   impersonation, unauthorized access, and credential leakage get rejected.
+   Fails **closed** (full refusal) on an unreachable/unparseable response —
+   unlike CRAG evaluation (§4.8), this one is security-critical.
+
+Result shape: `{ content, action: "none" | "redacted" | "refused", reason?
+}`. Secret matches get precisely redacted in place (strip/replace) since
+they're a clean excisable span; impersonation/unauthorized-access matches
+fall back to a full safe refusal instead, since there's no clean substring
+to remove without leaving a broken sentence. Citations are only omitted
+from the API response when `action === "refused"` — a redacted response's
+citations still point at real, legitimate content.
+
+Not queued (`queue:output-guardrails` skipped) — same reasoning as every
+other query-time stage in §5.
 
 ## 5. Orchestration — BullMQ
 
@@ -495,6 +511,9 @@ result. Stages evaluated against that bar so far:
   route's request/response cycle — there's no separate "follow-up retrieval
   round" job to enqueue once none of retrieval/ranking/generation are
   queued individually either.
+- **Output guardrails (§4.10): same reasoning, not queued.** The final,
+  terminal step of the same synchronous request — no separate job needed
+  once nothing upstream of it is queued either.
 - **Ingestion (§2.4): the actual right fit.** Long-running (can exceed a
   request/serverless timeout entirely), doesn't need to block the visitor,
   benefits genuinely from per-chunk retries and rate-limiting on embedding
@@ -505,7 +524,6 @@ Queues:
   and `ingest-chunk` (child: embed + upsert one chunk, retried
   independently), fanned out via BullMQ's manual parent/children pattern
   (§2.4).
-- `queue:output-guardrails` — single job, terminal.
 
 A parent "pipeline" job (or BullMQ flow) tracks overall request state and
 attempt count. Redis is the queue backend; connection config lives in

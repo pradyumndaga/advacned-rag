@@ -1,5 +1,6 @@
 import { openAIChat } from "../llm/providers/openai";
 import { checkRules } from "./rules";
+import { parseClassifierResponse } from "./classifier";
 
 export interface GuardrailResult {
     passed: boolean;
@@ -26,28 +27,6 @@ const CLASSIFIER_SYSTEM_PROMPT =
     "textual signal matching one of the four categories above. " +
     "Respond with ONLY a single-line JSON object, no markdown, no prose, in exactly this " +
     'shape: {"verdict": "accepted" | "rejected", "reason": "<short reason>"}';
-
-interface ClassifierResponse {
-    verdict: "accepted" | "rejected";
-    reason: string;
-}
-
-function parseClassifierResponse(raw: string): ClassifierResponse | null {
-    try {
-        const parsed = JSON.parse(raw.trim());
-        // The model sometimes omits `reason` on an "accepted" verdict (nothing
-        // noteworthy to explain) — only the verdict itself is load-bearing.
-        if (parsed && (parsed.verdict === "accepted" || parsed.verdict === "rejected")) {
-            return {
-                verdict: parsed.verdict,
-                reason: typeof parsed.reason === "string" ? parsed.reason : "",
-            };
-        }
-        return null;
-    } catch {
-        return null;
-    }
-}
 
 export async function inputGuardRails(query: string): Promise<GuardrailResult> {
     const violations = checkRules(query);
