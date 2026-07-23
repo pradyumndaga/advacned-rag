@@ -67,6 +67,7 @@ export interface ChunkMatch {
   id: string
   score: number
   payload: StoredChunk
+  vector: number[]
 }
 
 export async function searchChunks(vector: number[], limit: number): Promise<ChunkMatch[]> {
@@ -75,8 +76,14 @@ export async function searchChunks(vector: number[], limit: number): Promise<Chu
     vector,
     limit,
     with_payload: true,
+    with_vector: true, // ranker.ts re-ranks against the original query using these
   })
-  return (points as unknown as { id: string | number; score: number; payload: StoredChunk }[]).map(
-    (p) => ({ id: String(p.id), score: p.score, payload: p.payload })
-  )
+  return (
+    points as unknown as {
+      id: string | number
+      score: number
+      payload: StoredChunk
+      vector: number[]
+    }[]
+  ).map((p) => ({ id: String(p.id), score: p.score, payload: p.payload, vector: p.vector }))
 }

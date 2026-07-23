@@ -337,12 +337,25 @@ metadata }`.
 ### 4.5 Ranking (`lib/retrieval/ranker.ts`)
 Merges candidate docs across sources/queries and produces a single ranked
 list:
-- Normalize per-source scores onto a common scale.
-- De-duplicate near-identical documents.
-- Re-rank (cross-encoder or LLM-based re-ranker) against the *original* user
-  query, not the transformed queries.
-- Truncate to top-K for context assembly (K configurable, token-budget
-  aware).
+- Normalize per-source scores onto a common scale. **Not real logic yet** —
+  only the vector adapter exists, so every candidate already shares one
+  metric; becomes real once a second adapter with a different scoring scale
+  exists.
+- De-duplicate exact-id duplicates (the same chunk retrieved via more than
+  one transformed query), keeping the highest-scoring occurrence. Fuzzy
+  near-duplicate detection across *different* chunks is deferred until
+  there's evidence it's needed.
+- Re-rank against the *original* user query, not the transformed queries —
+  implemented as embedding cosine similarity (re-embed the original query,
+  compare against each candidate's own stored vector) rather than a
+  cross-encoder or LLM-based re-ranker, since it's cheap, fast, and reuses
+  infra already in place; revisit if relevance quality turns out to need
+  more than that.
+- Truncate to top-K (8) for context assembly, plus a running character
+  budget (~6000 chars, same style as the ingestion chunker's budget) so a
+  handful of long chunks can't crowd out the rest.
+
+Fanned out as a plain function call, not `queue:ranking` — see §5.
 
 ### 4.6 Generation (`lib/generation/generate.ts`)
 Main LLM call: original user query + top-K ranked context → response.
@@ -432,6 +445,12 @@ result. Stages evaluated against that bar so far:
   request" there's no concurrency/scaling need a queue would solve. Fanned
   out via `Promise.allSettled` in `lib/retrieval/retrieve.ts` instead of a
   `queue:retrieval` this spec originally called for.
+- **Ranking (§4.5): same reasoning, not queued.** Also has to complete
+  synchronously before generation runs, within the same request. A single
+  function call in `lib/retrieval/ranker.ts` instead of the `queue:ranking`
+  BullMQ flow (depends on all retrieval jobs) this spec originally called
+  for — there are no separate retrieval jobs to depend on once retrieval
+  itself isn't queued either.
 - **Ingestion (§2.4): the actual right fit.** Long-running (can exceed a
   request/serverless timeout entirely), doesn't need to block the visitor,
   benefits genuinely from per-chunk retries and rate-limiting on embedding
@@ -442,8 +461,6 @@ Queues:
   and `ingest-chunk` (child: embed + upsert one chunk, retried
   independently), fanned out via BullMQ's manual parent/children pattern
   (§2.4).
-- `queue:ranking` — single job, depends on all retrieval jobs for that
-  request.
 - `queue:generation` — single job.
 - `queue:crag-eval` — single job; enqueues a follow-up retrieval round on
   failure (up to the attempt cap) instead of looping in-process.

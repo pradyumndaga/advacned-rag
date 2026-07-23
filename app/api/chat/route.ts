@@ -3,6 +3,7 @@ import { openAIChat } from "@/lib/llm/providers/openai";
 import { inputGuardRails } from "@/lib/guardrails/input";
 import { transformQuery } from "@/lib/query-transform";
 import { retrieveForQueries } from "@/lib/retrieval/retrieve";
+import { rankDocs } from "@/lib/retrieval/ranker";
 
 export async function POST(request: Request) {
   const { query } = await request.json();
@@ -18,10 +19,11 @@ export async function POST(request: Request) {
 
   const transformedQueries = await transformQuery(query);
   const retrievedDocs = await retrieveForQueries(transformedQueries);
+  const rankedDocs = await rankDocs(query, retrievedDocs);
 
-  // Ranking/context-assembly aren't built yet, so generation still runs on
-  // the raw query — retrieval is computed and reported for the trace, but
-  // not consumed by generation until ranking (Phase 7) assembles context.
+  // Context assembly/generation still runs on the raw query — ranking is
+  // computed and reported for the trace, but generation doesn't consume the
+  // ranked context yet until Phase 8 wires it in.
   const content = await openAIChat("gpt-4o-mini", query);
   return NextResponse.json({
     content,
@@ -32,6 +34,10 @@ export async function POST(request: Request) {
     retrieval: {
       count: retrievedDocs.length,
       sources: Array.from(new Set(retrievedDocs.map((d) => d.source))),
+    },
+    ranking: {
+      candidates: retrievedDocs.length,
+      ranked: rankedDocs.length,
     },
   });
 }

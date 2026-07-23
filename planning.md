@@ -215,11 +215,38 @@ CLAUDE.md
   query-understanding. Generation still doesn't consume the retrieved docs
   yet — that's ranking/context-assembly (Phase 7/8).
 
-## Phase 7 — Ranking
-- `ranker.ts`: score normalization across sources, de-dup, re-rank against
-  the *original* query, truncate to token-budget-aware top-K.
-- `queue:ranking` job depends on all retrieval jobs for the request
-  (BullMQ flow parent/children).
+## Phase 7 — Ranking ✅ implemented
+- `lib/retrieval/ranker.ts`: `rankDocs(originalQuery, docs)`.
+  - **De-dup**: by chunk id (exact-duplicate), keeping the highest-scoring
+    occurrence — retrieval runs once per transformed query, so the same
+    chunk routinely comes back multiple times. Fuzzy near-duplicate
+    detection across *different* chunks is deferred until there's evidence
+    it's needed (today there's one adapter, so nothing produces
+    near-duplicates from separate sources).
+  - **Score normalization across sources**: not implemented as real logic —
+    with only the vector adapter existing, every candidate already shares
+    one metric (cosine similarity), so there's nothing to normalize yet.
+    Becomes real once a second adapter with a different scoring scale
+    exists.
+  - **Re-rank against the original query**: re-embeds the original query and
+    computes cosine similarity against each deduped candidate's own stored
+    vector (carried through `RetrievedDoc.metadata.vector` from the vector
+    adapter, stripped again before the ranked docs leave the ranker) —
+    corrects for the fact a doc's retrieval score reflects relevance to
+    whichever transformed query fetched it, not what the user actually
+    asked.
+  - **Truncate**: top-8, plus a ~6000-char running budget (same
+    character-budget-as-token-proxy style as the ingestion chunker) so a
+    handful of long chunks can't blow past what generation can use.
+- **Not queued** — same reasoning as retrieval (§6 below): the chat route
+  has to synchronously await ranking before generation runs, so
+  `queue:ranking` (BullMQ flow parent/children, as originally planned) would
+  add latency with no fire-and-forget benefit. Runs as a plain function call
+  in `lib/retrieval/ranker.ts`.
+- Wired into `app/api/chat/route.ts` and surfaced as a real `ranking` trace
+  line (`"N candidates → M after de-dup + re-rank"`). Verified live: 40
+  retrieved candidates deduped/re-ranked down to 7. Generation still
+  doesn't consume the ranked docs yet — that's Phase 8.
 
 ## Phase 8 — Generation
 - `generate.ts`: main-tier LLM call with original query + top-K context.

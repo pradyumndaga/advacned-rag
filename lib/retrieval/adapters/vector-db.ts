@@ -25,6 +25,10 @@ export const vectorDbAdapter: RetrievalAdapter = {
         chunkIndex: match.payload.chunkIndex,
         startTime: match.payload.startTime,
         endTime: match.payload.endTime,
+        // Carried through only for ranker.ts's re-rank-against-original-query
+        // step — never serialized back to the client (the chat API route
+        // only returns summary counts, not full docs).
+        vector: match.vector,
       },
     }))
   },

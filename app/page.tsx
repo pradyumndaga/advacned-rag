@@ -73,6 +73,7 @@ export default function Home() {
       queryUnderstandingStage,
       routeAdaptorStage,
       retrievalStage,
+      rankingStage,
       ...restStages
     ] = PIPELINE_STAGES
 
@@ -105,6 +106,7 @@ export default function Home() {
       error?: string
       queryUnderstanding?: { count: number; types: string[] }
       retrieval?: { count: number; sources: string[] }
+      ranking?: { candidates: number; ranked: number }
     }
     try {
       res = await fetch("/api/chat", {
@@ -149,6 +151,7 @@ export default function Home() {
     // happened.
     const qu = data.queryUnderstanding
     const retrieval = data.retrieval
+    const ranking = data.ranking
     setLines((prev) => [
       ...prev,
       {
@@ -179,6 +182,16 @@ export default function Home() {
           retrieval && retrieval.count > 0
             ? `${retrieval.count} chunks retrieved`
             : "no matching chunks found",
+        timestamp: timestamp(),
+      },
+      {
+        id: `${runId}-${rankingStage}`,
+        label: rankingStage,
+        status: "done",
+        detail:
+          ranking && ranking.ranked > 0
+            ? `${ranking.candidates} candidates → ${ranking.ranked} after de-dup + re-rank`
+            : "nothing to rank",
         timestamp: timestamp(),
       },
     ])
