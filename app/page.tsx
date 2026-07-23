@@ -68,7 +68,13 @@ export default function Home() {
     ])
 
     const runId = Date.now()
-    const [guardrailStage, queryUnderstandingStage, ...restStages] = PIPELINE_STAGES
+    const [
+      guardrailStage,
+      queryUnderstandingStage,
+      routeAdaptorStage,
+      retrievalStage,
+      ...restStages
+    ] = PIPELINE_STAGES
 
     // Only the stages that are actually going to run get a line — a stage
     // further down the pipeline must not appear until the one before it has
@@ -98,6 +104,7 @@ export default function Home() {
       reason?: string
       error?: string
       queryUnderstanding?: { count: number; types: string[] }
+      retrieval?: { count: number; sources: string[] }
     }
     try {
       res = await fetch("/api/chat", {
@@ -134,12 +141,14 @@ export default function Home() {
 
     updateLine(runId, guardrailStage, { status: "done" })
 
-    // Query understanding also already ran server-side by the time this
-    // response arrived — guardrail check, transforms, and generation all
-    // happen in one request, so there's no separate "active" window to show
-    // for this stage yet. Append it already resolved, with a real summary of
-    // what the transforms actually produced.
+    // Query understanding, route-adaptor, and retrieval all already ran
+    // server-side by the time this response arrived — guardrail check,
+    // transforms, retrieval, and generation all happen in one request, so
+    // there's no separate "active" window to show for these stages yet.
+    // Append them already resolved, with real summaries of what actually
+    // happened.
     const qu = data.queryUnderstanding
+    const retrieval = data.retrieval
     setLines((prev) => [
       ...prev,
       {
@@ -150,6 +159,26 @@ export default function Home() {
           qu && qu.count > 0
             ? `${qu.count} transforms (${qu.types.join(", ")})`
             : "no transforms produced — continuing with original query",
+        timestamp: timestamp(),
+      },
+      {
+        id: `${runId}-${routeAdaptorStage}`,
+        label: routeAdaptorStage,
+        status: "done",
+        detail:
+          retrieval && retrieval.sources.length > 0
+            ? `routed to: ${retrieval.sources.join(", ")}`
+            : "no adapter matched",
+        timestamp: timestamp(),
+      },
+      {
+        id: `${runId}-${retrievalStage}`,
+        label: retrievalStage,
+        status: "done",
+        detail:
+          retrieval && retrieval.count > 0
+            ? `${retrieval.count} chunks retrieved`
+            : "no matching chunks found",
         timestamp: timestamp(),
       },
     ])

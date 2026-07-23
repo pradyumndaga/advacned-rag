@@ -297,9 +297,15 @@ Classifies each transformed query and selects which data source(s) to query:
 - SQL DB — structured/tabular/aggregatable data.
 - Graph DB — relationship/multi-hop queries.
 
-Routing decision is a mini-LLM classification (+ lightweight heuristics) over
-the query, returning one or more target adapters. Also the re-entry point for
-CRAG's keyword-feedback retry loop.
+**Current implementation: heuristic-only, no mini-LLM call.** Only the
+vector adapter exists (§4.4), so classifying a query into one of four
+destinations when three don't resolve to anything real would be LLM
+cost/latency with zero observable behavior difference — every outcome is
+"use vector" either way. `routeQuery` always returns `["vector"]` for now;
+the function signature already covers all four targets so real mini-LLM
+classification is a small addition once a second adapter exists, not a
+rewrite. Still the re-entry point for CRAG's keyword-feedback retry loop
+once that's built.
 
 ### 4.4 Multi-DB Retrieval (`lib/retrieval/adapters/`)
 One adapter per data source implementing a common interface:
@@ -307,16 +313,26 @@ One adapter per data source implementing a common interface:
 ```ts
 interface RetrievalAdapter {
   name: string;
-  retrieve(query: TransformedQuery, opts: RetrieveOptions): Promise<RetrievedDoc[]>;
+  retrieve(query: TransformedQuery, opts?: RetrieveOptions): Promise<RetrievedDoc[]>;
 }
 ```
+
+Only the vector adapter (`adapters/vector-db.ts`) is implemented — against
+Qdrant Cloud, using the same collection Phase 4 ingestion writes to. It
+embeds the transformed query's text (or reuses HyDE's embedding directly,
+since that's already a vector meant for retrieval) and calls Qdrant's
+similarity search. Keyword/SQL/graph adapters are deferred until there's
+real data of those shapes to query — building them now against no data
+would be exactly the kind of speculative work `AGENTS.md` §4 rules out.
 
 For now, adapters read their DB credentials from `process.env`, same pattern
 as `lib/llm/providers/openai.ts` today. (Future direction per §0: BYOK,
 credentials threaded per-request instead — not yet.)
 
-Adapters run in parallel per routed query. Each `RetrievedDoc` carries
-`{ id, content, source, sourceScore, metadata }`.
+Adapters run in parallel per routed query, fanned out in-process via
+`Promise.allSettled` (`lib/retrieval/retrieve.ts`) — **not** BullMQ; see §5
+for why. Each `RetrievedDoc` carries `{ id, content, source, sourceScore,
+metadata }`.
 
 ### 4.5 Ranking (`lib/retrieval/ranker.ts`)
 Merges candidate docs across sources/queries and produces a single ranked
@@ -400,7 +416,7 @@ produced it:
 
 Not every stage that talks to an LLM or an external DB is a BullMQ job —
 queueing earns its cost when the producer doesn't need to wait around for the
-result. Two stages were evaluated against that bar this session:
+result. Stages evaluated against that bar so far:
 
 - **Query-transform (§4.2): deliberately *not* queued.** The API route still
   has to synchronously await all four transforms before it can respond to
@@ -410,15 +426,22 @@ result. Two stages were evaluated against that bar this session:
   benefit: no retry semantics beyond what `Promise.allSettled` already gave
   it, no concurrency control needed at "4 calls per request", no scaling
   benefit at this volume. Stays a plain in-process fan-out.
+- **Retrieval (§4.4): same reasoning, not queued.** The chat route has to
+  synchronously await retrieval before ranking/generation can run — no
+  fire-and-forget benefit, and at "one adapter, a handful of queries per
+  request" there's no concurrency/scaling need a queue would solve. Fanned
+  out via `Promise.allSettled` in `lib/retrieval/retrieve.ts` instead of a
+  `queue:retrieval` this spec originally called for.
 - **Ingestion (§2.4): the actual right fit.** Long-running (can exceed a
   request/serverless timeout entirely), doesn't need to block the visitor,
   benefits genuinely from per-chunk retries and rate-limiting on embedding
   calls. This is where BullMQ earns its complexity.
 
 Queues:
-- `queue:ingestion` — one job per chunk (embed + upsert), fanned out from a
-  parent ingestion job per source (§2.4).
-- `queue:retrieval` — one job per routed (query, adapter) pair.
+- `queue:ingestion` — implemented as `ingest-source` (parent: load + chunk)
+  and `ingest-chunk` (child: embed + upsert one chunk, retried
+  independently), fanned out via BullMQ's manual parent/children pattern
+  (§2.4).
 - `queue:ranking` — single job, depends on all retrieval jobs for that
   request.
 - `queue:generation` — single job.

@@ -62,3 +62,21 @@ export async function fetchChunksBySource(sourceId: string): Promise<StoredChunk
     .map((p) => p.payload)
     .sort((a, b) => a.chunkIndex - b.chunkIndex)
 }
+
+export interface ChunkMatch {
+  id: string
+  score: number
+  payload: StoredChunk
+}
+
+export async function searchChunks(vector: number[], limit: number): Promise<ChunkMatch[]> {
+  await ensureCollection()
+  const points = await getClient().search(COLLECTION, {
+    vector,
+    limit,
+    with_payload: true,
+  })
+  return (points as unknown as { id: string | number; score: number; payload: StoredChunk }[]).map(
+    (p) => ({ id: String(p.id), score: p.score, payload: p.payload })
+  )
+}

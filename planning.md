@@ -186,13 +186,34 @@ CLAUDE.md
   resource opens the correct preview (plain text and timestamped transcript
   both confirmed).
 
-## Phase 6 — Route adaptor + multi-DB retrieval
-- Define `RetrievalAdapter` interface; implement vector DB adapter first
-  (minimum viable retrieval, against Qdrant Cloud — real ingested data from
-  Phase 4, not a hand-seeded fixture), then keyword/SQL/graph adapters.
-- `route-adaptor.ts`: mini-model + heuristic classification from
-  `TransformedQuery` → adapter selection.
-- `queue:retrieval` jobs, one per (query, adapter) pair, run in parallel.
+## Phase 6 — Route adaptor + multi-DB retrieval ✅ implemented
+- `lib/retrieval/adapters/types.ts`: `RetrievalAdapter` interface.
+- `lib/retrieval/adapters/vector-db.ts`: real adapter against Qdrant Cloud —
+  embeds the transformed query (or reuses HyDE's existing embedding),
+  `lib/db/qdrant.ts`'s new `searchChunks` does the similarity search, maps
+  results to `RetrievedDoc`. Verified against the real Phase 4 ingested data,
+  not a fixture (30 chunks back for 6 transformed queries × top-5).
+- `lib/retrieval/route-adaptor.ts`: **heuristic-only, no mini-LLM call** —
+  deviates from the original "mini-model + heuristic classification" plan.
+  Reasoning: keyword/SQL/graph adapters don't exist yet, so classifying a
+  query into one of four destinations when three don't resolve to anything
+  real would be pure LLM cost/latency with zero observable behavior
+  difference (100% of outcomes are "use vector" either way) — the same
+  "does this stage actually benefit" test this project already applied when
+  reverting BullMQ on query-transform (specs.md §5). `routeQuery` always
+  returns `["vector"]` for now; the function signature and `AdapterTarget`
+  union already cover all four so adding real classification later, once a
+  second adapter exists, is a small diff not a rewrite.
+- `lib/retrieval/retrieve.ts`: fans out retrieval **in-process via
+  `Promise.allSettled`, not `queue:retrieval`** — another deviation from the
+  original plan, same reasoning as query-transform: the chat API route has
+  to synchronously await these results before ranking/generation, so a
+  queue would only add Redis round-trip latency with no fire-and-forget
+  benefit. `specs.md` §5 updated to reflect this.
+- Wired into `app/api/chat/route.ts` and surfaced as real `route-adaptor`
+  and `retrieval` trace lines in the UI (not simulated), same pattern as
+  query-understanding. Generation still doesn't consume the retrieved docs
+  yet — that's ranking/context-assembly (Phase 7/8).
 
 ## Phase 7 — Ranking
 - `ranker.ts`: score normalization across sources, de-dup, re-rank against
