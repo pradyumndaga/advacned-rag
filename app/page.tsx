@@ -281,11 +281,11 @@ export default function Home() {
         <ModeToggle />
       </header>
 
-      <section className="rounded-xl border border-border bg-card p-4">
+      <section className="rounded-xl border border-border bg-card p-3">
         <IngestPanel onIngested={() => setResourceRefreshSignal((n) => n + 1)} />
       </section>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 md:grid-cols-[220px_minmax(0,1fr)_minmax(0,1fr)]">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 md:grid-cols-[220px_minmax(0,2fr)_minmax(0,1fr)]">
         <section className="min-h-0 min-w-0 overflow-hidden rounded-xl border border-border bg-card">
           <ResourcePanel
             refreshSignal={resourceRefreshSignal}

@@ -24,7 +24,6 @@ interface SourceTypeConfig {
   input: "file" | "url"
   accept?: string
   matchesFile?: (file: File) => boolean
-  span?: string
 }
 
 const SOURCE_TYPES: SourceTypeConfig[] = [
@@ -61,7 +60,6 @@ const SOURCE_TYPES: SourceTypeConfig[] = [
     description: "Paste a video link — we pull the captions.",
     icon: PlayCircle,
     input: "url",
-    span: "sm:col-span-2",
   },
   {
     kind: "webpage",
@@ -160,9 +158,9 @@ export function IngestPanel({ onIngested }: IngestPanelProps) {
   }
 
   return (
-    <div className="flex flex-col gap-5">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        {SOURCE_TYPES.map((type, i) => {
+    <div className="flex flex-col gap-3">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+        {SOURCE_TYPES.map((type) => {
           const Icon = type.icon
           const isFile = type.input === "file"
           const isBusy = busyKinds.has(type.kind)
@@ -185,6 +183,7 @@ export function IngestPanel({ onIngested }: IngestPanelProps) {
               key={type.kind}
               role="button"
               tabIndex={0}
+              title={type.description}
               onClick={activate}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
@@ -215,46 +214,33 @@ export function IngestPanel({ onIngested }: IngestPanelProps) {
                   : undefined
               }
               className={cn(
-                "group flex cursor-pointer flex-col justify-between gap-8 rounded-2xl border p-5 text-left ring-1 ring-foreground/10 transition-all",
-                "bg-card hover:bg-muted/40",
-                isActive ? "border-ring bg-muted/40 ring-ring/40" : "border-transparent",
-                isBusy && "pointer-events-none opacity-70",
-                type.span
+                "group flex cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border border-dashed p-3 text-center transition-all",
+                "border-foreground/15 bg-card hover:border-foreground/30 hover:bg-muted/40",
+                isActive && "border-ring bg-muted/40 ring-1 ring-ring/40",
+                isBusy && "pointer-events-none opacity-70"
               )}
             >
-              <div className="flex items-start justify-between">
-                <div className="flex size-10 items-center justify-center rounded-xl bg-foreground/5 text-foreground/70 transition-colors group-hover:text-foreground">
-                  {isBusy ? (
-                    <Loader2 className="size-5 animate-spin" />
-                  ) : (
-                    <Icon className="size-5" />
-                  )}
-                </div>
-                <span className="font-mono text-xs tabular-nums text-muted-foreground/50">
-                  {String(i + 1).padStart(2, "0")}
-                </span>
+              <div className="flex size-8 items-center justify-center rounded-lg bg-foreground/5 text-foreground/70 transition-colors group-hover:text-foreground">
+                {isBusy ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Icon className="size-4" />
+                )}
               </div>
-              <div>
-                <p className="text-xl font-medium text-foreground">
-                  {type.title}
-                </p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {type.description}
-                </p>
-                <p
-                  className={cn(
-                    "mt-2 text-xs",
-                    error ? "text-red-400" : "text-muted-foreground/60"
-                  )}
-                >
-                  {error ??
-                    (isBusy
-                      ? "Uploading…"
-                      : isFile
-                        ? "Click or drop a file here"
-                        : "Click to paste a link")}
-                </p>
-              </div>
+              <p className="text-sm font-medium text-foreground">{type.title}</p>
+              <p
+                className={cn(
+                  "text-[11px] leading-tight",
+                  error ? "text-red-400" : "text-muted-foreground/70"
+                )}
+              >
+                {error ??
+                  (isBusy
+                    ? "Uploading…"
+                    : isFile
+                      ? "Drop or click"
+                      : "Click to paste link")}
+              </p>
               {isFile && (
                 <input
                   ref={(el) => {

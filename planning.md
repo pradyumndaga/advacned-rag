@@ -379,23 +379,83 @@ duplicating the source-type → icon mapping in both places.
   through untouched, confirming the guardrail doesn't defeat the app's own
   purpose.
 
-## Phase 11 — UI polish
-- Query input + streaming/polling result view (`app/page.tsx`,
-  `components/chat/`) using shadcn components per `AGENTS.md` §1.
-- Optional: `components/pipeline-trace/` to visualize route decisions and
-  CRAG journal entries for debugging (dev-only surface, not shown to normal
-  end users per `specs.md` §4.9).
-- By this phase the ingestion source grid (built earlier) and resources
-  panel/preview (Phase 5) already exist — this phase is about the overall
-  layout coming together (ingestion + resources panel + chat + trace), not
-  building new upload/resource surfaces from scratch.
+## Phase 11 — UI polish ✅ implemented
+- Query input + result view (`app/page.tsx`, `components/chat/`) — already
+  built across earlier phases; this phase was about final layout balance,
+  not new surfaces.
+- `components/pipeline-trace/` already exists and shows every real stage
+  live (input-guardrails through output-guardrails) — kept visible rather
+  than hidden, since watching the real pipeline run is central to this
+  project's learning goal, even though `specs.md` §4.9 frames it as a
+  dev-only surface "not shown to normal end users by default."
+- **Layout rebalanced around chat as the primary surface**, per explicit
+  request: the upload row (`components/upload/ingest-panel.tsx`) went from
+  a two-row descriptive bento-grid (~300px tall) to a single-row grid of
+  compact drop-zone cards (dashed border, icon, one-line hint, ~90px tall)
+  — first tried an even more compact pill-toolbar with no dashed border,
+  but that lost the drag-and-drop affordance entirely and was reverted in
+  favor of this middle ground. The three-column grid below
+  (Resources | Chat | pipeline-trace) changed from equal-width columns to
+  `[220px_minmax(0,2fr)_minmax(0,1fr)]` so chat gets roughly double the
+  trace panel's width, with the height reclaimed from the upload row
+  flowing to chat/resources/trace via the existing `flex-1` container.
 
-## Phase 12 — Testing
-- Only after Phases 0–11 work end-to-end for a real query. Cover: guardrail
-  block/pass cases, ingestion loader/chunker correctness per source type,
-  resource lifecycle state transitions (including failure + retry),
-  route-adaptor classification, ranker merge/de-dup correctness, CRAG
-  retry-loop attempt-cap enforcement, output guardrail redaction.
+## Phase 12 — Testing ✅ implemented
+Added after Phases 0–11 were already working end-to-end for a real query,
+per `AGENTS.md` §2. **Vitest** (`vitest.config.ts`, `@/*` alias matching
+`tsconfig.json`; `npm test` / `npm run test:watch`) — chosen since it's
+ESM-native with minimal config, fitting a codebase already using `tsx`
+elsewhere. 65 tests across 11 files, co-located as `*.test.ts` next to the
+code they cover:
+
+- `lib/guardrails/rules.test.ts` — every violation category, case
+  insensitivity, multi-category matches, ordinary queries pass clean.
+- `lib/guardrails/classifier.test.ts` — `parseClassifierResponse`: valid
+  accept/reject, missing `reason`, malformed JSON, wrong shape.
+- `lib/guardrails/input.test.ts` / `output.test.ts` — `openAIChat` mocked
+  via `vi.mock`. Input: rule-block skips the classifier call entirely,
+  classifier accept/reject, fail-closed on classifier error/unparseable
+  response. Output: normal passthrough, secret-pattern redaction, exact-match
+  redaction of this app's own configured secret (using a fake secret value
+  that deliberately doesn't match any generic pattern, to isolate that path
+  specifically), refusal-trigger phrases skip the classifier, classifier
+  reject/error/unparseable-response all fail closed, and — the one that
+  matters most — real PII from the user's own document is confirmed to
+  pass through untouched.
+- `lib/ingestion/loaders/cues.test.ts` — SRT and VTT parsing, multi-line
+  cue joining, tag stripping, NOTE-block/malformed-timestamp/empty-text
+  skip cases (fail-open), empty input.
+- `lib/ingestion/chunkers/token-budget.test.ts` /
+  `time-window.test.ts` — short-text passthrough, whitespace collapsing,
+  multi-chunk splitting with verified overlap, budget-respecting truncation;
+  time-window merging within/across the ~45s boundary, real timestamp
+  preservation, trailing partial window flush.
+- `lib/retrieval/route-adaptor.test.ts` — trivial today (always `["vector"]`
+  for every `TransformedQuery` type) but still covered, since that's the
+  contract the rest of the pipeline depends on.
+- `lib/retrieval/ranker.test.ts` — `openAIEmbed` mocked. De-dup keeps the
+  highest-scoring occurrence, re-rank score reflects similarity to the
+  *original* query (not the stale retrieval score — verified with a doc
+  that has a high retrieval score but a low true relevance and vice versa),
+  internal `vector` field stripped from output metadata, top-K truncation,
+  character-budget truncation.
+- `lib/crag/orchestrate.test.ts` — retrieval/ranking/generation/evaluation
+  all mocked so scores are fully controllable. Covers: single-attempt pass
+  (no retry, keyword extraction never called), retry after a failing
+  attempt with the second `retrieveForQueries` call verified to be seeded
+  with *only* the keyword-feedback query, the 3-attempt cap with keyword
+  extraction correctly skipped on the final attempt, and — the trickiest
+  case — that the *best-scoring* attempt is returned even when a later,
+  lower-scoring attempt ran after it.
+- `lib/ingestion/resource-store.test.ts` — a small in-memory fake standing
+  in for `getRedisConnection()` (implementing only the exact calls
+  resource-store.ts makes). Covers create/get round-trip, unknown-id
+  lookups, the full `queued → processing → ready` transition, `→ failed`
+  with an error message from a non-terminal prior state, and newest-first
+  listing order.
+
+All 65 tests pass; `npx tsc --noEmit` and `npx eslint` both clean across
+the whole repo including the new test files.
 
 ## Open decisions to confirm before/while implementing
 - Which concrete LLM providers for mini vs main tier.
