@@ -248,13 +248,39 @@ CLAUDE.md
   retrieved candidates deduped/re-ranked down to 7. Generation still
   doesn't consume the ranked docs yet — that's Phase 8.
 
-## Phase 8 — Generation
-- `generate.ts`: main-tier LLM call with original query + top-K context.
-- Track which `RetrievedDoc.id`s contributed to the response so it can carry
-  citations (`specs.md` §4.6) — wire citation click-through in the chat UI to
-  open `components/resources/resource-preview.tsx` (from Phase 5) with the
-  cited chunk, rather than building a second preview surface.
-- `queue:generation` job.
+## Phase 8 — Generation ✅ implemented
+- `lib/generation/generate.ts`: `generateAnswer(query, rankedDocs)` — main
+  tier (`gpt-4o`) call, numbers the ranked context passages `[1]..[N]` in
+  the prompt, instructs the model to cite inline in that form. Falls back
+  to a "no matching context found" system prompt when ranking produced
+  nothing.
+- **Citation tracking, simpler than originally planned**: rather than having
+  the model self-report which `RetrievedDoc.id`s it used (fragile — the
+  model could omit or hallucinate entries in a separate structured list),
+  `app/api/chat/route.ts` builds a citation lookup table for *every* ranked
+  doc, numbered the same way they were shown to the model. The frontend
+  (`components/chat/chat-panel.tsx`) only turns a `[N]` it finds in the
+  model's own answer text into a clickable chip — so which citations end up
+  visible/clickable is driven entirely by what the model actually
+  referenced, with no separate self-reporting step to trust.
+- Citation click-through wired to `components/resources/resource-preview.tsx`
+  (Phase 5) exactly as planned — clicking a `[N]` chip opens that chunk's
+  source, scrolled to and highlighting the cited chunk. No second preview
+  surface built.
+- **Not queued** (`queue:generation` skipped) — same reasoning as
+  retrieval/ranking: the chat route awaits it synchronously either way.
+- Wired into `app/api/chat/route.ts`; the `generation` trace line moved out
+  of the simulated stages into the real block (`"gpt-4o response, N citable
+  chunks"`). Verified live: a real query against the indexed PDF/SRT/MD/
+  webpage content produced a grounded, correctly-cited answer, and clicking
+  its citation chip opened the right resource at the right chunk.
+- Known current limitation, not a bug: retrieval has no relevance-score
+  threshold, so a query wildly outside the indexed content still gets
+  *some* context handed to generation (whatever's nearest by cosine
+  similarity, however irrelevant) rather than "no results." CRAG evaluation
+  (Phase 9) is the mechanism meant to catch exactly this — a generated
+  answer that isn't actually grounded in relevant context — so it's left
+  unaddressed here rather than bolted on ahead of that phase.
 
 ## Phase 9 — CRAG self-correction loop
 - `evaluate.ts`: mini-model scoring rubric (relevance, groundedness,

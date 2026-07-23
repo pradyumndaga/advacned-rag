@@ -14,6 +14,7 @@ import {
   ResourcePreview,
   type ResourcePreviewTarget,
 } from "@/components/resources/resource-preview"
+import type { Citation } from "@/lib/types"
 
 const PIPELINE_STAGES = [
   "input-guardrails",
@@ -74,6 +75,7 @@ export default function Home() {
       routeAdaptorStage,
       retrievalStage,
       rankingStage,
+      generationStage,
       ...restStages
     ] = PIPELINE_STAGES
 
@@ -107,6 +109,7 @@ export default function Home() {
       queryUnderstanding?: { count: number; types: string[] }
       retrieval?: { count: number; sources: string[] }
       ranking?: { candidates: number; ranked: number }
+      citations?: Citation[]
     }
     try {
       res = await fetch("/api/chat", {
@@ -194,6 +197,16 @@ export default function Home() {
             : "nothing to rank",
         timestamp: timestamp(),
       },
+      {
+        id: `${runId}-${generationStage}`,
+        label: generationStage,
+        status: "done",
+        detail:
+          data.citations && data.citations.length > 0
+            ? `gpt-4o response, ${data.citations.length} citable chunks`
+            : "gpt-4o response, no context to cite",
+        timestamp: timestamp(),
+      },
     ])
 
     // Only now append the remaining stages — they're not implemented yet, so
@@ -226,6 +239,7 @@ export default function Home() {
           id: `${runId}-assistant`,
           role: "assistant",
           content: data.content ?? "Something went wrong reaching the model.",
+          citations: data.citations,
         },
       ])
     }, restStages.length * 350 + 300)
@@ -257,7 +271,16 @@ export default function Home() {
           />
         </section>
         <section className="min-h-0 min-w-0 overflow-hidden rounded-xl border border-border bg-card">
-          <ChatPanel messages={messages} onSendMessage={handleSendMessage} />
+          <ChatPanel
+            messages={messages}
+            onSendMessage={handleSendMessage}
+            onCiteClick={(citation) =>
+              setPreviewTarget({
+                sourceId: citation.sourceId,
+                chunkId: String(citation.chunkIndex),
+              })
+            }
+          />
         </section>
         <section className="min-h-0 min-w-0">
           <TerminalPanel lines={lines} />

@@ -359,10 +359,21 @@ Fanned out as a plain function call, not `queue:ranking` — see §5.
 
 ### 4.6 Generation (`lib/generation/generate.ts`)
 Main LLM call: original user query + top-K ranked context → response.
-Uses the "main" model tier (see §4.7), not the mini model. Tracks which
-`RetrievedDoc.id`s actually contributed to the response, so the answer can
-carry citations pointing back to specific chunks — which is what §3.3's
-preview click-through opens against.
+Uses the "main" model tier (see §4.7), not the mini model. Context passages
+are numbered `[1]..[N]` in the prompt (the same order ranking produced),
+and the model is instructed to cite inline in that form.
+
+Citation tracking deviates from "the model self-reports which docs
+contributed": `app/api/chat/route.ts` builds a citation lookup table for
+every ranked doc rather than trusting a separate structured list from the
+model (which could omit or hallucinate entries) — the chat UI only turns a
+`[N]` it finds in the model's own answer text into a clickable link, so
+which citations end up visible is driven by what the model actually wrote,
+not by a second self-reported field. Clicking one opens §3.3's preview,
+scrolled to and highlighting the cited chunk.
+
+Not queued (`queue:generation` skipped) — same reasoning as §4.4/§4.5,
+see §5.
 
 ### 4.7 Multi-LLM routing (`lib/llm/`)
 Provider-agnostic layer with two model tiers, selected per pipeline stage:
@@ -451,6 +462,9 @@ result. Stages evaluated against that bar so far:
   BullMQ flow (depends on all retrieval jobs) this spec originally called
   for — there are no separate retrieval jobs to depend on once retrieval
   itself isn't queued either.
+- **Generation (§4.6): same reasoning, not queued.** The chat route awaits
+  the main-tier LLM call directly and returns its response — no
+  fire-and-forget, no `queue:generation` job.
 - **Ingestion (§2.4): the actual right fit.** Long-running (can exceed a
   request/serverless timeout entirely), doesn't need to block the visitor,
   benefits genuinely from per-chunk retries and rate-limiting on embedding
@@ -461,7 +475,6 @@ Queues:
   and `ingest-chunk` (child: embed + upsert one chunk, retried
   independently), fanned out via BullMQ's manual parent/children pattern
   (§2.4).
-- `queue:generation` — single job.
 - `queue:crag-eval` — single job; enqueues a follow-up retrieval round on
   failure (up to the attempt cap) instead of looping in-process.
 - `queue:output-guardrails` — single job, terminal.

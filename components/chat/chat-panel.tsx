@@ -8,19 +8,66 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Textarea } from "@/components/ui/textarea"
+import { Citation } from "@/lib/types"
 
 export interface ChatMessage {
   id: string
   role: "user" | "assistant"
   content: string
+  citations?: Citation[]
 }
 
 interface ChatPanelProps {
   messages: ChatMessage[]
   onSendMessage: (content: string) => void
+  onCiteClick?: (citation: Citation) => void
 }
 
-export function ChatPanel({ messages, onSendMessage }: ChatPanelProps) {
+// The model is instructed to cite passages inline as "[1]", "[2]", etc.,
+// numbered the same way they were shown to it — swap each one that maps to
+// a real citation into a clickable chip; anything else (an out-of-range or
+// hallucinated bracket) just renders as plain text.
+function renderContent(
+  content: string,
+  citations: Citation[] | undefined,
+  onCiteClick: ((citation: Citation) => void) | undefined
+) {
+  if (!citations?.length || !onCiteClick) return content
+
+  const parts: React.ReactNode[] = []
+  const pattern = /\[(\d+)\]/g
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  let key = 0
+
+  while ((match = pattern.exec(content)) !== null) {
+    const citation = citations[Number(match[1]) - 1]
+    if (match.index > lastIndex) {
+      parts.push(content.slice(lastIndex, match.index))
+    }
+    if (citation) {
+      parts.push(
+        <button
+          key={`cite-${key++}`}
+          type="button"
+          onClick={() => onCiteClick(citation)}
+          title={citation.label}
+          className="mx-0.5 rounded bg-primary/15 px-1 py-0.5 align-baseline text-xs font-medium text-primary hover:bg-primary/25"
+        >
+          [{match[1]}]
+        </button>
+      )
+    } else {
+      parts.push(match[0])
+    }
+    lastIndex = pattern.lastIndex
+  }
+  if (lastIndex < content.length) parts.push(content.slice(lastIndex))
+
+  return parts
+}
+
+export function ChatPanel({ messages, onSendMessage, onCiteClick }: ChatPanelProps) {
   const [value, setValue] = React.useState("")
   const viewportRef = React.useRef<HTMLDivElement>(null)
 
@@ -66,7 +113,7 @@ export function ChatPanel({ messages, onSendMessage }: ChatPanelProps) {
                     : "bg-muted text-foreground"
                 )}
               >
-                {message.content}
+                {renderContent(message.content, message.citations, onCiteClick)}
               </div>
             </div>
           ))}
