@@ -1,36 +1,121 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Advanced RAG
 
-## Getting Started
+A retrieval-augmented generation app built end-to-end: multi-format
+ingestion (PDF, Markdown, SRT/VTT, YouTube, web pages), input guardrails,
+query understanding (rewrite/stepback/sub-questions/HyDE), vector
+retrieval, ranking, generation with clickable citations, a CRAG
+self-correction loop, and output guardrails — all visible in real time via
+a pipeline-trace panel.
 
-First, run the development server:
+For the full architecture and phased build history, see [`specs.md`](specs.md)
+and [`planning.md`](planning.md). [`AGENTS.md`](AGENTS.md) documents the
+engineering conventions this repo follows.
+
+## Prerequisites
+
+- **Node.js 20.9+** (Next.js 16's minimum)
+- **A Redis instance** — either running locally or a free
+  [Redis Cloud](https://redis.io/try-free/) database. Used as the BullMQ
+  queue backend for ingestion.
+- **A Qdrant Cloud cluster** — free tier works. Sign up at
+  [cloud.qdrant.io](https://cloud.qdrant.io/). The vector collection is
+  created automatically the first time a document is ingested.
+- **An OpenAI API key** — [platform.openai.com](https://platform.openai.com/).
+  Used for chat/completion and embeddings.
+
+## Setup
+
+1. **Clone and install dependencies**
+
+   ```bash
+   git clone https://github.com/pradyumndaga/advacned-rag.git
+   cd advacned-rag
+   npm install
+   ```
+
+2. **Configure environment variables**
+
+   ```bash
+   cp .env.example .env.local
+   ```
+
+   Fill in `.env.local`:
+
+   | Variable | Required | Description |
+   |---|---|---|
+   | `OPENAI_API_KEY` | Yes | OpenAI API key |
+   | `REDIS_URL` | No | Redis connection string. Defaults to `redis://localhost:6379` if unset |
+   | `QDRANT_API_KEY` | Yes | Qdrant Cloud API key |
+   | `QDRANT_DB` | Yes | Qdrant Cloud cluster URL (e.g. `https://xxxxxxxx.qdrant.io:6333`) |
+   | `QDRANT_COLLECTION` | No | Collection name for indexed chunks. Defaults to `advanced-rag-chunks` |
+
+   If running Redis locally instead of Redis Cloud, install and start it
+   first (e.g. `brew install redis && brew services start redis` on macOS),
+   and you can leave `REDIS_URL` unset.
+
+## Running the app
+
+This project needs **two processes running at the same time**:
 
 ```bash
+# Terminal 1 — the Next.js app
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+```bash
+# Terminal 2 — the BullMQ worker (handles document ingestion)
+npm run worker
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Then open [http://localhost:3000](http://localhost:3000).
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+> **Why two processes?** Ingestion (loading, chunking, embedding, and
+> upserting a document) runs as a background BullMQ job so uploading a
+> large file doesn't block a request. If `npm run worker` isn't running,
+> uploaded sources will sit in the "Queued" state forever — see
+> `specs.md` §5 for why ingestion (and only ingestion) is queued this way.
 
-## Learn More
+### Using the app
 
-To learn more about Next.js, take a look at the following resources:
+1. Add a source using the row of drop-zone cards at the top — PDF,
+   Markdown, or SRT/VTT files by drag-and-drop or click; YouTube or web
+   page links by pasting a URL.
+2. Watch it move through **Queued → Processing → Ready** in the Resources
+   panel on the left (a red dot means it failed — hover for the error).
+3. Once at least one source is **Ready**, ask a question in the chat.
+   The pipeline-trace panel on the right shows every real stage as it
+   runs — guardrails, query transforms, retrieval, ranking, generation,
+   CRAG evaluation, and output guardrails.
+4. Click any `[N]` citation in an answer, or the source chip underneath
+   it, to open that exact chunk in a preview.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Running tests
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+npm test          # run once
+npm run test:watch
+```
 
-## Deploy on Vercel
+65 tests (Vitest) cover guardrail logic, ingestion parsing/chunking,
+ranking, the CRAG retry loop, and resource lifecycle transitions — see
+`planning.md`'s Phase 12 section for what's covered and how external
+calls (LLM, embeddings, Redis) are mocked.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Other scripts
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm run build   # production build
+npm run start   # run a production build (still needs npm run worker alongside it)
+npm run lint    # ESLint
+```
+
+## Known limitations
+
+- Only the vector-DB retrieval adapter is implemented (keyword/SQL/graph
+  are designed for but not built — see `specs.md` §4.4).
+- The web page loader can't render client-side (JS-rendered SPA) pages —
+  it fetches raw HTML only, so a page whose content loads via JavaScript
+  after the initial load will fail with a clear error explaining why.
+- Credentials are read from server-side environment variables for now,
+  not per-visitor BYOK — see `specs.md` §0 for the deferred future
+  direction (Vercel + BYOK deployment).
