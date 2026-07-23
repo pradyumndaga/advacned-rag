@@ -76,6 +76,7 @@ export default function Home() {
       retrievalStage,
       rankingStage,
       generationStage,
+      cragStage,
       ...restStages
     ] = PIPELINE_STAGES
 
@@ -106,9 +107,11 @@ export default function Home() {
       refused?: boolean
       reason?: string
       error?: string
+      lowConfidence?: boolean
       queryUnderstanding?: { count: number; types: string[] }
       retrieval?: { count: number; sources: string[] }
       ranking?: { candidates: number; ranked: number }
+      crag?: { attempts: number; score: number; lowConfidence: boolean }
       citations?: Citation[]
     }
     try {
@@ -207,6 +210,15 @@ export default function Home() {
             : "gpt-4o response, no context to cite",
         timestamp: timestamp(),
       },
+      {
+        id: `${runId}-${cragStage}`,
+        label: cragStage,
+        status: "done",
+        detail: data.crag
+          ? `score ${data.crag.score.toFixed(2)}/1.00, ${data.crag.attempts} attempt${data.crag.attempts > 1 ? "s" : ""}${data.crag.lowConfidence ? " — low confidence" : ""}`
+          : "no evaluation",
+        timestamp: timestamp(),
+      },
     ])
 
     // Only now append the remaining stages — they're not implemented yet, so
@@ -240,6 +252,7 @@ export default function Home() {
           role: "assistant",
           content: data.content ?? "Something went wrong reaching the model.",
           citations: data.citations,
+          lowConfidence: data.lowConfidence,
         },
       ])
     }, restStages.length * 350 + 300)

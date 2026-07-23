@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
 import { inputGuardRails } from "@/lib/guardrails/input";
 import { transformQuery } from "@/lib/query-transform";
-import { retrieveForQueries } from "@/lib/retrieval/retrieve";
-import { rankDocs } from "@/lib/retrieval/ranker";
-import { generateAnswer } from "@/lib/generation/generate";
+import { runCragLoop } from "@/lib/crag/orchestrate";
 import { getResource } from "@/lib/ingestion/resource-store";
 import { Citation } from "@/lib/types";
+import { SourceType } from "@/lib/ingestion/types";
 
 export async function POST(request: Request) {
   const { query } = await request.json();
@@ -20,22 +19,21 @@ export async function POST(request: Request) {
   }
 
   const transformedQueries = await transformQuery(query);
-  const retrievedDocs = await retrieveForQueries(transformedQueries);
-  const rankedDocs = await rankDocs(query, retrievedDocs);
-  const content = await generateAnswer(query, rankedDocs);
+  const crag = await runCragLoop(query, transformedQueries);
 
-  // Every ranked doc gets a citation entry, numbered the same way generate.ts
-  // numbered them in the prompt ("[1]", "[2]", ...) — the frontend only turns
-  // a "[N]" it finds in the answer text into a clickable link, so which
-  // citations actually appear is driven entirely by which ones the model
-  // referenced, not by anything reported here.
+  // Every ranked doc from the winning attempt gets a citation entry, numbered
+  // the same way generate.ts numbered them in the prompt ("[1]", "[2]", ...)
+  // — the frontend only turns a "[N]" it finds in the answer text into a
+  // clickable link, so which citations actually appear is driven entirely by
+  // which ones the model referenced, not by anything reported here.
   const citations: Citation[] = await Promise.all(
-    rankedDocs.map(async (doc, i) => {
+    crag.rankedDocs.map(async (doc, i) => {
       const sourceId = String(doc.metadata.sourceId ?? "");
       const resource = sourceId ? await getResource(sourceId) : null;
       return {
         index: i + 1,
         sourceId,
+        sourceType: (doc.metadata.sourceType as SourceType) ?? "webpage",
         chunkIndex: Number(doc.metadata.chunkIndex ?? 0),
         label: resource?.label ?? sourceId,
       };
@@ -43,18 +41,25 @@ export async function POST(request: Request) {
   );
 
   return NextResponse.json({
-    content,
+    content: crag.content,
+    lowConfidence: crag.lowConfidence,
     queryUnderstanding: {
       count: transformedQueries.length,
       types: transformedQueries.map((t) => t.type),
     },
     retrieval: {
-      count: retrievedDocs.length,
-      sources: Array.from(new Set(retrievedDocs.map((d) => d.source))),
+      count: crag.retrievedCount,
+      sources: Array.from(new Set(crag.rankedDocs.map((d) => d.source))),
     },
     ranking: {
-      candidates: retrievedDocs.length,
-      ranked: rankedDocs.length,
+      candidates: crag.retrievedCount,
+      ranked: crag.rankedDocs.length,
+    },
+    crag: {
+      attempts: crag.attempts,
+      score: crag.evaluation.score,
+      lowConfidence: crag.lowConfidence,
+      journal: crag.journal,
     },
     citations,
   });

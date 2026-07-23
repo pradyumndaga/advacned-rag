@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Send, Sparkles } from "lucide-react"
+import { AlertTriangle, Send, Sparkles } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -9,12 +9,14 @@ import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Textarea } from "@/components/ui/textarea"
 import { Citation } from "@/lib/types"
+import { SOURCE_ICONS } from "@/components/resources/source-icon"
 
 export interface ChatMessage {
   id: string
   role: "user" | "assistant"
   content: string
   citations?: Citation[]
+  lowConfidence?: boolean
 }
 
 interface ChatPanelProps {
@@ -67,6 +69,28 @@ function renderContent(
   return parts
 }
 
+// The "Sources" row under a response shows only citations the model actually
+// referenced (a "[N]" literally present in its answer text), deduped to one
+// entry per source document — a source cited via three different chunks
+// should still only show up once in this list.
+function usedSources(content: string, citations: Citation[] | undefined): Citation[] {
+  if (!citations?.length) return []
+
+  const used: Citation[] = []
+  const seenSourceIds = new Set<string>()
+  const pattern = /\[(\d+)\]/g
+  let match: RegExpExecArray | null
+
+  while ((match = pattern.exec(content)) !== null) {
+    const citation = citations[Number(match[1]) - 1]
+    if (citation && !seenSourceIds.has(citation.sourceId)) {
+      seenSourceIds.add(citation.sourceId)
+      used.push(citation)
+    }
+  }
+  return used
+}
+
 export function ChatPanel({ messages, onSendMessage, onCiteClick }: ChatPanelProps) {
   const [value, setValue] = React.useState("")
   const viewportRef = React.useRef<HTMLDivElement>(null)
@@ -92,31 +116,68 @@ export function ChatPanel({ messages, onSendMessage, onCiteClick }: ChatPanelPro
 
       <ScrollArea className="min-h-0 flex-1">
         <div ref={viewportRef} className="flex flex-col gap-4 p-4">
-          {messages.map((message) => (
-            <div
-              key={message.id}
-              className={cn(
-                "flex items-start gap-2.5",
-                message.role === "user" && "flex-row-reverse"
-              )}
-            >
-              <Avatar size="sm">
-                <AvatarFallback>
-                  {message.role === "user" ? "U" : "AI"}
-                </AvatarFallback>
-              </Avatar>
+          {messages.map((message) => {
+            const sources = usedSources(message.content, message.citations)
+            return (
               <div
+                key={message.id}
                 className={cn(
-                  "max-w-[75%] rounded-xl px-3 py-2 text-sm whitespace-pre-wrap",
-                  message.role === "user"
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-muted text-foreground"
+                  "flex flex-col gap-1.5",
+                  message.role === "user" && "items-end"
                 )}
               >
-                {renderContent(message.content, message.citations, onCiteClick)}
+                <div
+                  className={cn(
+                    "flex items-start gap-2.5",
+                    message.role === "user" && "flex-row-reverse"
+                  )}
+                >
+                  <Avatar size="sm">
+                    <AvatarFallback>
+                      {message.role === "user" ? "U" : "AI"}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div
+                    className={cn(
+                      "max-w-[75%] rounded-xl px-3 py-2 text-sm whitespace-pre-wrap",
+                      message.role === "user"
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-foreground"
+                    )}
+                  >
+                    {renderContent(message.content, message.citations, onCiteClick)}
+                  </div>
+                </div>
+
+                {message.lowConfidence && (
+                  <div className="ml-9 flex items-center gap-1.5 text-xs text-amber-500">
+                    <AlertTriangle className="size-3.5" />
+                    Low confidence — the retrieved context may not fully answer this.
+                  </div>
+                )}
+
+                {sources.length > 0 && (
+                  <div className="ml-9 flex flex-wrap gap-1.5">
+                    {sources.map((citation) => {
+                      const Icon = SOURCE_ICONS[citation.sourceType]
+                      return (
+                        <button
+                          key={citation.sourceId}
+                          type="button"
+                          onClick={() => onCiteClick?.(citation)}
+                          title={citation.label}
+                          className="flex items-center gap-1 rounded-full border border-border bg-muted/40 px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
+                        >
+                          <Icon className="size-3" />
+                          <span className="max-w-40 truncate">{citation.label}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       </ScrollArea>
 

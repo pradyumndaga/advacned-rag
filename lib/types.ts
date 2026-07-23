@@ -1,5 +1,7 @@
+import type { SourceType } from "./ingestion/types";
+
 export interface TransformedQuery {
-    type: "stepback" | "rewrite" | "subquestion" | "hyde";
+    type: "stepback" | "rewrite" | "subquestion" | "hyde" | "keyword-feedback";
     text: string;
     embedding?: number[];
 }
@@ -19,6 +21,7 @@ export interface RetrievedDoc {
 export interface Citation {
     index: number;
     sourceId: string;
+    sourceType: SourceType;
     chunkIndex: number;
     label: string;
 }

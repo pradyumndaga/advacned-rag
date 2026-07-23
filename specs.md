@@ -259,6 +259,13 @@ Rendering differs by the source's original shape (§2.1):
   timestamps, scrolled to and highlighting the cited chunk's `startTime`–
   `endTime` window when opened from a citation.
 
+**Two click-through entry points, one preview.** Beyond the inline `[N]`
+citation chips in the answer text (§4.6), each response also shows a
+deduped "sources used" chip row underneath it (one per distinct source
+document, not per cited chunk) — both open this exact same preview
+component with the same `ResourcePreviewTarget`, just via different
+trigger UI.
+
 ## 4. Components (query-time)
 
 ### 4.1 Input Guardrails (`lib/guardrails/input.ts`)
@@ -395,15 +402,27 @@ on a specific vendor SDK. For now, keys come from `process.env`, same as the
 rest of the repo. (Future direction per §0: per-request BYOK — not yet.)
 
 ### 4.8 CRAG evaluation (`lib/crag/evaluate.ts`)
-Mini model scores the generated response against `{ original query, context
-used, response }` on a defined rubric (relevance, groundedness/faithfulness
-to context, completeness). Returns a numeric score + rationale.
-- Threshold and max attempts are configurable; default **max 3 attempts**.
-- On failing score: extract keywords (`lib/crag/keywords.ts`) from the
-  response/context to re-seed retrieval, and re-enter the Route Adaptor.
-- After 3 failed attempts: return the best-scoring response of the three,
-  through Output Guardrails, with a low-confidence flag rather than blocking
-  the user entirely.
+Mini model (`gpt-4o-mini`) scores the generated response against `{ original
+query, context used, response }` on three 0-1 dimensions — relevance,
+groundedness/faithfulness to context, completeness — averaged into one
+score, plus a one-sentence rationale.
+- Threshold **0.6**, max attempts **3** (`lib/crag/orchestrate.ts`).
+- Fails open (score 1, i.e. treated as passing) on an unparseable mini-model
+  response — unlike the guardrails, this is a quality signal, not a
+  security control, so a parse error shouldn't force a retry over
+  infrastructure noise rather than an actual quality problem.
+- On failing score: extract keywords (`lib/crag/keywords.ts`, also
+  fail-open — falls back to the original query on a parse error) from the
+  response and the evaluator's rationale, and re-enter the Route Adaptor
+  with a fresh retrieval seeded by *only* those keywords (a new
+  `"keyword-feedback"` `TransformedQuery` type) — replacing the original
+  transformed queries for the retry, not adding to them, since they already
+  had their shot.
+- After 3 failed attempts: return the best-scoring response of the three
+  (not necessarily the last one), with a `lowConfidence` flag. Output
+  Guardrails (§4.10) still runs on it — not yet built, so it currently
+  reaches the client directly with that flag attached; the chat UI shows a
+  small low-confidence notice rather than hiding the issue.
 
 ### 4.9 CRAG journal (`lib/crag/journal.ts`)
 On every failed attempt, the CRAG mini model records a structured entry:
@@ -413,14 +432,19 @@ interface CragJournalEntry {
   attempt: number;
   score: number;
   whatWentWrong: string;   // mini-model diagnosis
-  fixApplied: string;      // e.g. "re-routed to graph DB with keywords [...]"
+  fixApplied: string;      // e.g. "re-ran retrieval with keyword feedback: [...]"
   keywordsUsed: string[];
 }
 ```
 
-Journal entries are attached to the pipeline job (BullMQ job data) for
-observability/debugging and optionally surfaced in the UI's pipeline trace
-view. Not shown to the end user by default.
+**Not attached to a BullMQ job** — CRAG isn't queued (see §5), so the
+journal is just part of `runCragLoop`'s in-memory return value for the
+request. Surfaced in the UI's pipeline-trace panel (score + attempt count),
+not in the chat message itself — matching "not shown to the end user by
+default." The one exception is the `lowConfidence` flag specifically, which
+*does* reach the chat UI (per §4.8), since a best-effort answer the pipeline
+itself isn't confident in is exactly what a user needs to know, unlike the
+diagnostic detail in the rest of the journal.
 
 ### 4.10 Output Guardrails (`lib/guardrails/output.ts`)
 Runs on the final response before it's returned, regardless of which attempt
@@ -465,6 +489,12 @@ result. Stages evaluated against that bar so far:
 - **Generation (§4.6): same reasoning, not queued.** The chat route awaits
   the main-tier LLM call directly and returns its response — no
   fire-and-forget, no `queue:generation` job.
+- **CRAG evaluation + retry loop (§4.8): same reasoning, not queued.** The
+  whole retrieve → rank → generate → evaluate cycle, retries included, runs
+  as a single in-process loop (`lib/crag/orchestrate.ts`) inside the chat
+  route's request/response cycle — there's no separate "follow-up retrieval
+  round" job to enqueue once none of retrieval/ranking/generation are
+  queued individually either.
 - **Ingestion (§2.4): the actual right fit.** Long-running (can exceed a
   request/serverless timeout entirely), doesn't need to block the visitor,
   benefits genuinely from per-chunk retries and rate-limiting on embedding
@@ -475,8 +505,6 @@ Queues:
   and `ingest-chunk` (child: embed + upsert one chunk, retried
   independently), fanned out via BullMQ's manual parent/children pattern
   (§2.4).
-- `queue:crag-eval` — single job; enqueues a follow-up retrieval round on
-  failure (up to the attempt cap) instead of looping in-process.
 - `queue:output-guardrails` — single job, terminal.
 
 A parent "pipeline" job (or BullMQ flow) tracks overall request state and

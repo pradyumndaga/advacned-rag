@@ -1,26 +1,11 @@
 "use client"
 
 import * as React from "react"
-import {
-  Captions,
-  FileCode2,
-  FileText,
-  Globe,
-  Loader2,
-  PlayCircle,
-} from "lucide-react"
+import { Loader2 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
-import { Resource, ResourceStatus, SourceType } from "@/lib/ingestion/types"
-
-const KIND_ICON: Record<SourceType, React.ElementType> = {
-  pdf: FileText,
-  markdown: FileCode2,
-  srt: Captions,
-  vtt: Captions,
-  youtube: PlayCircle,
-  webpage: Globe,
-}
+import { Resource, ResourceStatus } from "@/lib/ingestion/types"
+import { SOURCE_ICONS } from "./source-icon"
 
 type VisibleGroup = "queued" | "processing" | "ready"
 
@@ -114,7 +99,7 @@ export function ResourcePanel({ refreshSignal, onSelect }: ResourcePanelProps) {
               </p>
               <div className="flex flex-col gap-0.5">
                 {group.items.map((resource) => {
-                  const Icon = KIND_ICON[resource.kind]
+                  const Icon = SOURCE_ICONS[resource.kind]
                   const clickable = resource.status === "ready"
                   return (
                     <button

@@ -282,16 +282,53 @@ CLAUDE.md
   answer that isn't actually grounded in relevant context — so it's left
   unaddressed here rather than bolted on ahead of that phase.
 
-## Phase 9 — CRAG self-correction loop
-- `evaluate.ts`: mini-model scoring rubric (relevance, groundedness,
-  completeness) against `{ query, context, response }`.
-- `keywords.ts`: keyword extraction from failing response/context for
-  retry seeding.
-- `journal.ts`: structured `CragJournalEntry` (what went wrong, fix applied,
-  keywords used) written on every failed attempt.
-- Wire the retry loop: on failing score, feed keywords back into the route
-  adaptor and re-run retrieval → ranking → generation → eval, capped at 3
-  total attempts. On exhaustion, return the best-scoring attempt.
+## Phase 9 — CRAG self-correction loop ✅ implemented
+- `lib/crag/evaluate.ts`: mini-model (`gpt-4o-mini`) scores `{ relevance,
+  groundedness, completeness }` each 0-1 against `{ query, context,
+  response }`; overall score is their average. Fails open (score 1) on an
+  unparseable mini-model response — this is a quality signal, not a
+  security control, so a parse hiccup shouldn't trigger a pointless retry
+  loop over noise.
+- `lib/crag/keywords.ts`: mini-model keyword extraction (up to 5) from the
+  failing response + the evaluator's rationale for *why* it failed. Fails
+  open to `[originalQuery]` on a parse error, so a retry round still has
+  something to search with.
+- `lib/crag/journal.ts`: `CragJournalEntry` type only — no logic beyond the
+  shape specs.md §4.9 defines.
+- `lib/crag/orchestrate.ts` (**new module, not explicitly named in specs.md
+  but needed to hold the loop itself**): `runCragLoop(query,
+  transformedQueries)` runs retrieve → rank → generate → evaluate, capped
+  at 3 attempts. On a failing score (< 0.6), re-enters via a fresh
+  `retrieveForQueries` call seeded with *only* the extracted keywords (a
+  new `"keyword-feedback"` `TransformedQuery` type, added to the union) —
+  replacing the original transformed queries for the retry rather than
+  re-running all of them again, since they already had their shot. Tracks
+  the best-scoring attempt across all tries; returns it with a
+  `lowConfidence` flag if even the best attempt never cleared the
+  threshold, per specs.md §4.8's "best-effort response + low-confidence
+  notice" behavior.
+- Wired into `app/api/chat/route.ts` (replacing the direct retrieve/rank/
+  generate calls) and surfaced as a real `crag-eval` trace line
+  (`"score X.XX/1.00, N attempts"`, plus "— low confidence" when
+  applicable). `lowConfidence` also reaches the chat UI, which shows a
+  small inline warning under a low-confidence answer rather than hiding
+  the issue.
+- Verified live end-to-end, both paths: a normal query passed on attempt 1
+  (score 1.00); a temporary threshold override (reverted after testing)
+  confirmed the full retry path — 3 real attempts, real keyword extraction
+  each round, a populated journal, and the low-confidence flag set exactly
+  when expected.
+
+### Sources-used list (UI addition, requested alongside this phase)
+Beyond the Phase 8 inline `[N]` citation chips, each assistant response now
+also shows a small row of source chips *underneath* it — deduped to one
+entry per source document (not one per cited chunk), built from whichever
+citation numbers actually appear in the model's answer text. Clicking one
+opens the same Phase 5 resource-preview component as the inline citations
+do, highlighting the first chunk from that source the response cited.
+Reuses a new shared `SOURCE_ICONS` map (`components/resources/
+source-icon.tsx`) extracted out of `resource-panel.tsx` rather than
+duplicating the source-type → icon mapping in both places.
 
 ## Phase 10 — Output guardrails
 - `lib/guardrails/output.ts`: same categories as input (impersonation,
