@@ -269,7 +269,7 @@ export default function Home() {
   }
 
   return (
-    <div className="mx-auto flex h-screen w-full max-w-7xl flex-col gap-4 p-4">
+    <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-4 p-4 md:h-screen">
       <header className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-lg font-semibold">Advanced RAG</h1>
@@ -285,14 +285,19 @@ export default function Home() {
         <IngestPanel onIngested={() => setResourceRefreshSignal((n) => n + 1)} />
       </section>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 md:grid-cols-[220px_minmax(0,2fr)_minmax(0,1fr)]">
-        <section className="min-h-0 min-w-0 overflow-hidden rounded-xl border border-border bg-card">
+      {/* Below md, this grid falls back to a single column (3 stacked
+          rows) — each panel needs an explicit height in that mode since
+          there's no shared row height to stretch into like there is when
+          they're laid out side by side. At md+, height comes from the grid
+          row via the flex-1 parent instead, so it's reset to auto there. */}
+      <div className="grid grid-cols-1 gap-4 md:min-h-0 md:flex-1 md:grid-cols-[220px_minmax(0,2fr)_minmax(0,1fr)]">
+        <section className="h-80 min-w-0 overflow-hidden rounded-xl border border-border bg-card md:h-auto md:min-h-0">
           <ResourcePanel
             refreshSignal={resourceRefreshSignal}
             onSelect={(resourceId) => setPreviewTarget({ sourceId: resourceId })}
           />
         </section>
-        <section className="min-h-0 min-w-0 overflow-hidden rounded-xl border border-border bg-card">
+        <section className="h-96 min-w-0 overflow-hidden rounded-xl border border-border bg-card md:h-auto md:min-h-0">
           <ChatPanel
             messages={messages}
             onSendMessage={handleSendMessage}
@@ -304,7 +309,7 @@ export default function Home() {
             }
           />
         </section>
-        <section className="min-h-0 min-w-0">
+        <section className="h-80 min-w-0 md:h-auto md:min-h-0">
           <TerminalPanel lines={lines} />
         </section>
       </div>
