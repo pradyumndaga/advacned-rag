@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { auth } from "@clerk/nextjs/server"
 import { deleteResource, getResource } from "@/lib/ingestion/resource-store"
 import { deleteChunksBySource, fetchChunksBySource } from "@/lib/db/qdrant"
+import { deletePdfBlob } from "@/lib/storage/blob"
 
 export async function GET(
   _request: Request,
@@ -44,6 +45,9 @@ export async function DELETE(
   }
 
   await deleteChunksBySource(id, userId)
+  if (resource.fileUrl) {
+    await deletePdfBlob(resource.fileUrl)
+  }
   await deleteResource(id, userId)
 
   return NextResponse.json({ success: true })

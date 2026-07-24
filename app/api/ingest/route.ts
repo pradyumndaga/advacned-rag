@@ -3,6 +3,7 @@ import { NextResponse } from "next/server"
 import { auth } from "@clerk/nextjs/server"
 import { createResource } from "@/lib/ingestion/resource-store"
 import { ingestSourceQueue } from "@/lib/queue/queues"
+import { uploadPdfBlob } from "@/lib/storage/blob"
 import { SourceType } from "@/lib/ingestion/types"
 
 const MAX_FILE_BYTES = 20 * 1024 * 1024 // 20 MB
@@ -34,6 +35,7 @@ export async function POST(request: Request) {
   let fileBase64: string | undefined
   let fileName: string | undefined
   let url: string | undefined
+  let fileUrl: string | undefined
 
   if (contentType.includes("multipart/form-data")) {
     const form = await request.formData()
@@ -51,7 +53,15 @@ export async function POST(request: Request) {
     fileName = file.name
     label = file.name
     detail = formatSize(file.size)
-    fileBase64 = Buffer.from(await file.arrayBuffer()).toString("base64")
+    const buffer = Buffer.from(await file.arrayBuffer())
+    fileBase64 = buffer.toString("base64")
+
+    // Only PDFs get the original bytes preserved in Blob storage — it's the
+    // only format where a preview needs the real binary (Markdown/subtitles
+    // preview fine from their own extracted text, see rawText below).
+    if (sourceType === "pdf") {
+      fileUrl = await uploadPdfBlob(buffer, file.name, userId)
+    }
   } else {
     const body = await request.json().catch(() => null)
     if (
@@ -83,6 +93,7 @@ export async function POST(request: Request) {
     status: "queued",
     createdAt: now,
     updatedAt: now,
+    fileUrl,
   })
 
   await ingestSourceQueue.add("ingest", {

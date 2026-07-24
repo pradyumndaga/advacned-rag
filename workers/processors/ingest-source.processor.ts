@@ -44,6 +44,15 @@ export async function processIngestSource(job: Job<IngestSourceJobData>, token?:
       url,
     })
 
+    // Markdown is the one text format where nothing is lost by keeping the
+    // full original around (unlike PDF, which needs its real binary in Blob
+    // storage for a faithful preview, or webpage, which links out to the
+    // live page instead) — this is what lets the preview show one readable
+    // document instead of fragmented chunks.
+    if (sourceType === "markdown" && loaded.kind === "text") {
+      await updateResource(resourceId, { rawText: loaded.text })
+    }
+
     const chunks =
       loaded.kind === "text"
         ? chunkText(loaded.text).map((c, i) => ({ ...c, chunkIndex: i, startTime: undefined, endTime: undefined }))

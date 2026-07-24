@@ -194,7 +194,16 @@ Every ingested chunk carries at minimum `{ sourceType, sourceId, chunkIndex }`
 chunks that came from a timed source. This flows straight into
 `RetrievedDoc.metadata` (§6 Data model) so ranking/citation can use it later,
 and is exactly what §3's resource preview reconstructs a source's content
-from.
+from for citation click-through and SRT/VTT sources.
+
+Additionally, `Resource` (§6) itself carries two more optional fields
+specifically for the direct (non-citation) preview case, ✅ implemented:
+`rawText` (Markdown only — the full original text, written by
+`workers/processors/ingest-source.processor.ts` right after the loader
+runs, since nothing is lost keeping it verbatim) and `fileUrl` (PDF only —
+the original binary, uploaded to Vercel Blob at ingest time in
+`app/api/ingest/route.ts`, before queuing). See §3.3 for how each source
+type's preview actually uses these.
 
 ### 2.4 Orchestration
 Per §5's orchestration decision, ingestion — not query-transform — is the
@@ -273,19 +282,35 @@ interface ResourcePreviewTarget {
 }
 ```
 
-Preview content is *reconstructed from the chunks already stored in the
-vector DB* — filter by `metadata.sourceId`, sort by `metadata.chunkIndex`,
-concatenate — rather than keeping a second copy of the raw document in a
-separate store. That's why §2.3's chunk metadata carries `sourceId` and
-`chunkIndex`: this preview and the future citation feature are both built on
-exactly that.
+When opened via a citation (`chunkId` set), preview content is always
+*reconstructed from the chunks already stored in the vector DB* — filter by
+`metadata.sourceId`, sort by `metadata.chunkIndex`, concatenate — since
+"jump to this exact passage" only makes sense against chunks regardless of
+source type. Rendering differs by the source's original shape (§2.1) in
+this mode: plain-text sources (PDF/Markdown/web page) render as
+reconstructed text scrolled to the cited chunk; timed sources (SRT/VTT/
+YouTube) render as a transcript with visible timestamps, scrolled to and
+highlighting the cited chunk's `startTime`–`endTime` window.
 
-Rendering differs by the source's original shape (§2.1):
-- **Plain-text sources** (PDF/Markdown/web page) — render the reconstructed
-  text, scrolled to the cited chunk's position when opened from a citation.
-- **Timed sources** (SRT/VTT/YouTube) — render as a transcript with visible
-  timestamps, scrolled to and highlighting the cited chunk's `startTime`–
-  `endTime` window when opened from a citation.
+**Opened directly from the panel (no `chunkId`) ✅ implemented**, each
+source type instead shows its real original content — reusing §2.3's
+`rawText`/`fileUrl` fields where they exist, falling back to the
+chunk-reconstruction view otherwise:
+- **YouTube** — a real `youtube.com/embed/<id>` iframe. No new storage
+  needed: the video ID is parsed straight out of the URL already sitting in
+  `Resource.label`.
+- **Web page** — most sites block being iframed (`X-Frame-Options`), so
+  this renders an "Open original page" link instead of attempting an embed
+  that would silently fail on most real sites.
+- **Markdown** — the full `rawText` rendered as one readable block, instead
+  of fragmented chunks.
+- **PDF** — the real document, streamed from Vercel Blob through
+  `GET /api/resources/[id]/file` (ownership-checked, same as every other
+  resource route) and rendered via the browser's native PDF viewer in an
+  `<iframe>`.
+- **SRT/VTT** — still the chunk-reconstruction transcript view; the
+  existing timestamped-transcript rendering already serves as a good
+  "original" view for these, so no additional storage was added.
 
 **Two click-through entry points, one preview.** Beyond the inline `[N]`
 citation chips in the answer text (§4.6), each response also shows a

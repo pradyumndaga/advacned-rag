@@ -33,6 +33,14 @@ export interface Resource {
   error?: string
   createdAt: number
   updatedAt: number
+  // Original PDF bytes, uploaded to Vercel Blob at ingest time — lets the
+  // preview render the real document instead of just its extracted text.
+  fileUrl?: string
+  // Original markdown source, kept verbatim (unlike PDF/webpage, nothing is
+  // lost by keeping the full text around — it's what the chunks were sliced
+  // from) so the preview can show one readable document instead of
+  // fragmented chunks.
+  rawText?: string
 }
 
 export interface StoredChunk {

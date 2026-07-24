@@ -186,6 +186,53 @@ CLAUDE.md
   resource opens the correct preview (plain text and timestamped transcript
   both confirmed).
 
+### Real file/video preview ✅ implemented
+Opening a resource directly from the panel (no `chunkId`, i.e. not a citation
+click-through) now shows the actual original content instead of always
+reconstructing it from stored chunks — split by source type since each one
+needed a different amount of new infrastructure:
+
+- **YouTube**: zero new storage — the original URL was already sitting in
+  `Resource.label` (set at ingest time in `app/api/ingest/route.ts`, just
+  never used for anything). `extractYoutubeVideoId()` in
+  `components/resources/resource-preview.tsx` parses the video ID out of
+  watch/shorts/live/youtu.be URL forms and renders a real
+  `youtube.com/embed/<id>` iframe.
+- **Webpage**: also zero storage — most sites block being iframed
+  (`X-Frame-Options`), so this renders an "Open original page" button
+  (`resource.label`, `target="_blank"`) instead of attempting an embed that
+  would silently fail on most real sites.
+- **Markdown**: `workers/processors/ingest-source.processor.ts` now writes
+  the full original text to a new `Resource.rawText` field right after the
+  loader runs (`sourceType === "markdown"` only — PDF/webpage's extracted
+  text isn't the "original" in the same sense). Cheap to keep since nothing
+  is lost by storing it verbatim, unlike PDF's binary. Preview renders it as
+  one readable block instead of fragmented chunks.
+- **PDF**: the one case needing real blob storage, since a faithful preview
+  needs the actual binary, not extracted text. Uses **Vercel Blob**
+  (private store, created via `npx vercel blob create-store <name>
+  --access private --yes`, which auto-provisions `BLOB_READ_WRITE_TOKEN`
+  across all three Vercel environments). `lib/storage/blob.ts` wraps
+  `put`/`get`/`del`. `app/api/ingest/route.ts` uploads the PDF bytes to
+  Blob at ingest time (before queuing — the route already has the raw
+  buffer) and stores the resulting URL as `Resource.fileUrl`. Because the
+  store is private, the blob is never reachable by a bare URL — every read
+  goes through the new `GET /api/resources/[id]/file` route, which applies
+  the same ownership check as every other resource endpoint before
+  streaming `blob.stream` through as the response body. `DELETE
+  /api/resources/[id]` now also deletes the blob (`deletePdfBlob`)
+  alongside its existing Redis+Qdrant cleanup.
+- A citation click (`target.chunkId` set) always falls back to the
+  existing chunk-highlight view regardless of kind — "jump to this exact
+  passage" only makes sense against chunks, so the richer kind-specific
+  preview only applies when opening a resource directly from the panel.
+- Verified live: YouTube embed rendered a real thumbnail/player; webpage
+  showed the "Open original page" button; a test Markdown file rendered as
+  one full block via `rawText`; a test PDF rendered in the browser's native
+  PDF viewer via the authenticated Blob-streaming route; deleting the PDF
+  resource was confirmed (via `vercel blob list`) to actually remove the
+  blob from the store, not just hide it client-side.
+
 ## Phase 6 — Route adaptor + multi-DB retrieval ✅ implemented
 - `lib/retrieval/adapters/types.ts`: `RetrievalAdapter` interface.
 - `lib/retrieval/adapters/vector-db.ts`: real adapter against Qdrant Cloud —
@@ -512,12 +559,13 @@ Vector DB choice for whenever retrieval is built: **Qdrant Cloud** — REST-
 native, which will matter once/if the BYOK+serverless direction above is
 picked back up, but is a fine choice for local/env-key use today too.
 
-## Multi-tenancy & admin (in progress)
+## Multi-tenancy & admin ✅ implemented
 Requested: real user accounts, per-user data isolation, resource deletion,
 a 10-free-chat cap per user, and an admin dashboard that can view usage and
-lift the cap for a user. Bigger than any single phase before it, so it's
-broken into sub-phases, done one at a time and verified before moving on
-(per explicit user preference — same rhythm as Phases 0-12).
+lift the cap for a user. Bigger than any single phase before it, so it was
+broken into sub-phases (13-17), done one at a time and verified before
+moving on (per explicit user preference — same rhythm as Phases 0-12). All
+five sub-phases are now implemented and verified.
 
 **"Upgrade" scope, confirmed with the user**: no billing/payment system —
 "upgrading" a user means removing their 10-chat cap, nothing else.
