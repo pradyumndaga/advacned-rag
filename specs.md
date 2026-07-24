@@ -597,3 +597,22 @@ interface PipelineRequest {
 - Guardrail checks are mandatory on both ends of the pipeline and cannot be
   disabled via config/env in production.
 - Secrets via environment variables only (see `AGENTS.md` §4).
+
+## 8. Authentication & multi-tenancy
+
+Every page and API route requires a signed-in [Clerk](https://clerk.com)
+session — `proxy.ts` establishes Clerk's auth context globally, and each
+page/route protects itself individually (`await auth.protect()` for pages,
+a manual `userId` check + 401 for API routes), not a centralized
+middleware-matcher, since that pattern is deprecated in the installed Clerk
+version. See `planning.md`'s "Multi-tenancy & admin" section for the full,
+actively-being-built breakdown: per-user data isolation across Qdrant/Redis
+(§2/§6's `Resource`/chunk shapes gain a `userId`), resource deletion, a
+10-free-chat cap per user, and an admin dashboard that can view usage and
+lift the cap for a user. No billing/payment system — "upgrading" a user
+means removing their chat cap, nothing else.
+
+Security note that shaped this: an admin account must never be created by
+hardcoding a password into code or config. Clerk owns authentication
+entirely; the admin signs up through Clerk's own form like any other user,
+and the app recognizes their email via an allowlist.

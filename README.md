@@ -22,6 +22,14 @@ engineering conventions this repo follows.
   created automatically the first time a document is ingested.
 - **An OpenAI API key** — [platform.openai.com](https://platform.openai.com/).
   Used for chat/completion and embeddings.
+- **A Clerk application** — free at [clerk.com](https://clerk.com/). Every
+  page and API route requires sign-in. Easiest setup: install the
+  [Clerk CLI](https://clerk.com/docs/cli) (`npm install -g clerk`), run
+  `clerk auth login`, then from the project root run
+  `clerk init --app <your-app-id>` — it detects the existing Next.js/Clerk
+  integration and writes the real keys straight into `.env.local`. (Manual
+  alternative: copy `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and
+  `CLERK_SECRET_KEY` from your Clerk dashboard's API Keys page yourself.)
 
 ## Setup
 
@@ -48,6 +56,8 @@ engineering conventions this repo follows.
    | `QDRANT_API_KEY` | Yes | Qdrant Cloud API key |
    | `QDRANT_DB` | Yes | Qdrant Cloud cluster URL (e.g. `https://xxxxxxxx.qdrant.io:6333`) |
    | `QDRANT_COLLECTION` | No | Collection name for indexed chunks. Defaults to `advanced-rag-chunks` |
+   | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Yes | Clerk publishable key |
+   | `CLERK_SECRET_KEY` | Yes | Clerk secret key |
 
    If running Redis locally instead of Redis Cloud, install and start it
    first (e.g. `brew install redis && brew services start redis` on macOS),
@@ -77,6 +87,8 @@ Then open [http://localhost:3000](http://localhost:3000).
 
 ### Using the app
 
+0. Sign up for an account (or sign in) at `/sign-in` — every page and API
+   route requires an authenticated session.
 1. Add a source using the row of drop-zone cards at the top — PDF,
    Markdown, or SRT/VTT files by drag-and-drop or click; YouTube or web
    page links by pasting a URL.
@@ -141,10 +153,15 @@ skip the workflow.
    Framework preset auto-detects as Next.js — no build settings to change.
 3. Add the same environment variables from `.env.local` under
    **Settings → Environment Variables**: `OPENAI_API_KEY`, `REDIS_URL`,
-   `QDRANT_API_KEY`, `QDRANT_DB`, and optionally `QDRANT_COLLECTION`.
+   `QDRANT_API_KEY`, `QDRANT_DB`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`,
+   `CLERK_SECRET_KEY`, and optionally `QDRANT_COLLECTION`.
 4. Deploy. `REDIS_URL` and `QDRANT_DB` need to point at instances reachable
    from the public internet (Redis Cloud and Qdrant Cloud both are) — a
    Redis running on `localhost` won't be reachable from Vercel.
+
+   Clerk's **development** keys (what local setup uses) work but log a
+   warning and have strict usage limits — for a real deployment, create a
+   **production instance** in the Clerk dashboard and use its keys instead.
 
 ### 2. Set up the ingestion workflow
 

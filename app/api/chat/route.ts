@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { auth } from "@clerk/nextjs/server";
 import { inputGuardRails } from "@/lib/guardrails/input";
 import { outputGuardRails } from "@/lib/guardrails/output";
 import { transformQuery } from "@/lib/query-transform";
@@ -8,6 +9,11 @@ import { Citation } from "@/lib/types";
 import { SourceType } from "@/lib/ingestion/types";
 
 export async function POST(request: Request) {
+  const { userId } = await auth();
+  if (!userId) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+
   const { query } = await request.json();
 
   if (typeof query !== "string" || !query.trim()) {

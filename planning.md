@@ -511,3 +511,114 @@ current work:
 Vector DB choice for whenever retrieval is built: **Qdrant Cloud** — REST-
 native, which will matter once/if the BYOK+serverless direction above is
 picked back up, but is a fine choice for local/env-key use today too.
+
+## Multi-tenancy & admin (in progress)
+Requested: real user accounts, per-user data isolation, resource deletion,
+a 10-free-chat cap per user, and an admin dashboard that can view usage and
+lift the cap for a user. Bigger than any single phase before it, so it's
+broken into sub-phases, done one at a time and verified before moving on
+(per explicit user preference — same rhythm as Phases 0-12).
+
+**"Upgrade" scope, confirmed with the user**: no billing/payment system —
+"upgrading" a user means removing their 10-chat cap, nothing else.
+
+**Security note**: an admin account must never be created by hardcoding a
+password into code/config. Clerk owns authentication entirely (hashed
+credentials, never touched by this app's code) — the admin signs up
+through Clerk's own sign-up form like any other user, and the app
+recognizes their email as admin via an allowlist. This was flagged
+explicitly when the request initially arrived with a literal password in
+chat, which was refused and never written anywhere.
+
+### Phase 13 — Authentication (Clerk) ✅ implemented and verified live
+- `@clerk/nextjs` installed. **Compatibility note**: this Next.js version
+  renamed `middleware.ts` → `proxy.ts` (function renamed too — see
+  `node_modules/next/dist/docs/.../file-conventions/proxy.md`, "the
+  functionality remains the same"). `proxy.ts` exports `clerkMiddleware()`
+  as the default export, which works identically to the old
+  `middleware.ts` pattern since it's still just a plain
+  `NextMiddleware`-compatible function underneath.
+- **Route protection uses per-page/per-route checks, not middleware-based
+  matching** — `createRouteMatcher` is marked `@deprecated` in this
+  installed Clerk version ("Move auth checks into each page, layout, API
+  route, or Server Function"), so that's what this app does instead of the
+  older centralized-matcher pattern:
+  - `app/page.tsx` is now a Server Component that calls `await
+    auth.protect()` before rendering; the actual UI moved to
+    `components/home/home-client.tsx` (Client Component, otherwise
+    unchanged).
+  - `app/sign-in/[[...sign-in]]/page.tsx` and `app/sign-up/[[...sign-up]]/page.tsx` —
+    Clerk's prebuilt `<SignIn />`/`<SignUp />`, intentionally left
+    unprotected (that's the point).
+  - `app/api/chat`, `app/api/ingest`, `app/api/resources`,
+    `app/api/resources/[id]` each check `const { userId } = await auth()`
+    and return 401 JSON if missing, rather than using `auth.protect()`
+    (which returns a bare 404 for unauthenticated API requests — less
+    useful for a JSON API our own frontend consumes).
+  - `proxy.ts` only establishes Clerk's auth context globally (bare
+    `clerkMiddleware()`, no route matcher) — it doesn't gate anything
+    itself.
+- `app/layout.tsx` wrapped in `<ClerkProvider>`; `<UserButton />` added to
+  the header next to the theme toggle.
+- Real Clerk credentials obtained via the official Clerk CLI
+  (`clerk auth login` + `clerk init --app <app-id>`), not manually copied —
+  `clerk init` confirmed the hand-built integration was already exactly
+  right (skipped `proxy.ts`, `layout.tsx`, and the sign-in/sign-up pages as
+  "already has Clerk middleware/ClerkProvider/sign-in page"), and just
+  wrote real keys into `.env.local`. Added the one thing it flagged as
+  missing: `/__clerk/:path*` in `proxy.ts`'s matcher.
+- **Side effect worth recording**: `clerk init` also downloaded 8 "Clerk
+  skills" into the user's global `~/.agents/skills/` and symlinked them
+  into `~/.claude/skills/` — outside this project's scope, not something
+  that was part of the plan presented beforehand. Removed at the user's
+  request after flagging it; the CLI itself prints "review skills before
+  use; they run with full agent permissions," worth remembering if
+  `clerk init` is ever run again.
+- Verified live end-to-end: unauthenticated `/` correctly redirects to
+  Clerk's real hosted sign-in page; unauthenticated `/api/chat`,
+  `/api/ingest`, `/api/resources` all return 401; after signing in through
+  the browser, the app renders fully with a working `<UserButton />`, and
+  an authenticated `fetch('/api/resources')` from within the page returns
+  200 with real data. `npx tsc --noEmit`, `npx eslint`, `clerk doctor`, and
+  the full Vitest suite (65 tests) all pass.
+
+### Phase 14 — Per-user data isolation (not started)
+- Add `userId` to `Resource` (`lib/ingestion/types.ts`) and to every
+  `StoredChunk`'s Qdrant payload.
+- Redis: scope the resource index per user (e.g. `resources:index:<userId>`
+  instead of a single global `resources:index`) — `lib/ingestion/resource-store.ts`.
+- Qdrant: filter `searchChunks`/`fetchChunksBySource` by `userId` in
+  addition to `sourceId` — `lib/db/qdrant.ts`, needs a payload index on
+  `userId` too (same reason `sourceId` needed one — Qdrant Cloud requires
+  an explicit index before a field can be used in a filter).
+- Thread `userId` from `auth()` through `/api/ingest` (into both the
+  resource record and the BullMQ job data — the worker process has no
+  request context of its own, so `userId` has to travel as job data, not
+  be re-derived from a session in the worker) and through `/api/chat`'s
+  retrieval calls.
+- Verify: two different signed-in users each see only their own resources
+  and get answers grounded only in their own documents.
+
+### Phase 15 — Resource deletion (not started)
+- `DELETE /api/resources/[id]` — verify the resource belongs to the
+  requesting user (depends on Phase 14), delete its Qdrant points
+  (filter-delete by `sourceId`), remove it from the Redis index.
+- UI: delete action in `components/resources/resource-panel.tsx`.
+
+### Phase 16 — Chat usage cap, 10 free chats (not started)
+- Redis counter per user, incremented on each successful `/api/chat` call.
+- `/api/chat` returns a clear "limit reached" response once the count
+  exceeds 10, unless the user has an `unlimited` flag (see Phase 17).
+- UI: surface remaining chats somewhere in the chat panel.
+
+### Phase 17 — Admin dashboard (not started)
+- Admin allowlist via an `ADMIN_EMAILS` env var (starting value:
+  `pradyumndaga28@gmail.com`, entered as an env var, never as a hardcoded
+  password anywhere).
+- `/admin` page: Server Component, `await auth.protect()` plus an email
+  check against the allowlist (403/redirect if not admin).
+- Lists every user (via Clerk's backend `clerkClient.users.getUserList()`)
+  alongside their resource count and chat usage count (Redis).
+- "Upgrade" action per user: sets their `unlimited` flag (Redis or Clerk
+  `publicMetadata`), exempting them from the Phase 16 cap. No other tier
+  concept, per the confirmed scope above.

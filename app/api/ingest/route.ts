@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto"
 import { NextResponse } from "next/server"
+import { auth } from "@clerk/nextjs/server"
 import { createResource } from "@/lib/ingestion/resource-store"
 import { ingestSourceQueue } from "@/lib/queue/queues"
 import { SourceType } from "@/lib/ingestion/types"
@@ -20,6 +21,11 @@ function formatSize(bytes: number) {
 }
 
 export async function POST(request: Request) {
+  const { userId } = await auth()
+  if (!userId) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 })
+  }
+
   const contentType = request.headers.get("content-type") ?? ""
 
   let sourceType: SourceType
