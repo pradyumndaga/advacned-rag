@@ -162,6 +162,47 @@ CLAUDE.md
   in `failed` with an error message). YouTube loader is implemented but not
   yet verified against a real video in this pass.
 
+### Word / CSV / Excel sources ✅ implemented
+Added later, per explicit request — three more `{ kind: "text" }` loaders,
+reusing the existing token-budget chunker with no new chunking logic:
+- `docx.ts` — via `mammoth`'s `extractRawText`, same shape as `pdf.ts`.
+- `csv.ts` / `xlsx.ts` — share a new `spreadsheet.ts` core (`rowsToText`,
+  unit-tested), the same relationship `srt.ts`/`vtt.ts` have to `cues.ts`.
+  Rather than dumping a raw grid, each row becomes one "Header: value, ..."
+  sentence — reads naturally to an embedder/LLM and chunks well with the
+  existing budget-based chunker. `xlsx.ts` labels each sheet
+  (`Sheet: <name>`) so a multi-sheet workbook's sections stay distinguishable
+  after chunking. `csv.ts` uses `csv-parse` (handles quoted/embedded
+  delimiters correctly, unlike a naive split); `xlsx.ts` uses `exceljs` —
+  note its bundled types predate Buffer's generic-over-ArrayBufferLike form,
+  needing a `Parameters<...>` + `unknown` cast at the `workbook.xlsx.load`
+  call site (a real typings mismatch, not a behavioral one).
+- `app/api/ingest/route.ts`: `docx` is its own file kind; `csv`/`xlsx` share
+  one UI kind (`spreadsheet`, matching how `subtitles` already covers both
+  `srt`/`vtt`) with `inferSpreadsheetType()` picking the real `SourceType`
+  from the extension.
+- `components/upload/ingest-panel.tsx`: two new tiles, "Word" and
+  "Spreadsheet". `components/resources/source-icon.tsx` gained
+  `SOURCE_ICONS`/`SOURCE_LABELS` entries for `docx`/`csv`/`xlsx` (`FileType2`,
+  `FileSpreadsheet` ×2 — "Word", "CSV", "Excel").
+- No dedicated rich preview (unlike PDF's Blob storage or Markdown's
+  `rawText`) — these fall back to the existing chunk-reconstruction preview,
+  same as SRT/VTT/web page. Matches what was actually asked for; richer
+  preview can be added later if wanted.
+- Security note: `exceljs` pulls in an old `uuid` transitively with a
+  moderate advisory (missing bounds check, but only reachable if the
+  *caller* passes an explicit `buf` argument to `uuid`'s v3/v5/v6 — exceljs's
+  internal usage doesn't do this). No non-major fix exists upstream yet;
+  accepted as the best-maintained option for `.xlsx` parsing, flagged to the
+  user rather than silently absorbed.
+- Verified live end-to-end: uploaded a real `.docx`, `.csv`, and `.xlsx`,
+  all reached `ready`; asked a question spanning facts unique to the CSV and
+  the XLSX in one query — both correctly retrieved and cited (confirmed via
+  the citation preview, which shows the exact `rowsToText` formatting).
+  Added `lib/ingestion/loaders/spreadsheet.test.ts` for the pure
+  `rowsToText` helper (multi-row formatting, blank-row skipping, a missing
+  trailing cell, empty input).
+
 ## Phase 5 — Resources panel & preview ✅ implemented
 - `components/resources/resource-panel.tsx`: left-hand panel, polls
   `GET /api/resources` while anything is unsettled, groups resources into

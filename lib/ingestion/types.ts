@@ -1,4 +1,13 @@
-export type SourceType = "pdf" | "markdown" | "srt" | "vtt" | "youtube" | "webpage"
+export type SourceType =
+  | "pdf"
+  | "markdown"
+  | "srt"
+  | "vtt"
+  | "youtube"
+  | "webpage"
+  | "docx"
+  | "csv"
+  | "xlsx"
 
 export interface Cue {
   start: number

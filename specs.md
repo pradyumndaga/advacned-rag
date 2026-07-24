@@ -125,7 +125,8 @@ in it. §2 covers how content gets there.
 
 A separate, asynchronous pipeline from §1 — it runs when a visitor adds a
 source to the index, not when they ask a question. Supported source types:
-**PDF, Markdown, SRT, VTT, YouTube link, web page URL.**
+**PDF, Markdown, SRT, VTT, YouTube link, web page URL, Word (.docx), CSV,
+Excel (.xlsx).**
 
 ```
 Source (file upload or URL)
@@ -134,6 +135,9 @@ Source (file upload or URL)
 [Source Loader] — one per source type, normalizes into a common shape:
    ├─ PDF          → plain text
    ├─ Markdown     → plain text
+   ├─ Word (.docx) → plain text
+   ├─ CSV          → plain text ("Header: value, ..." per row)
+   ├─ Excel (.xlsx)→ plain text (same row format, one section per sheet)
    ├─ SRT          → timed cues { start, end, text }
    ├─ VTT          → timed cues (shares cue-parsing core with SRT)
    ├─ YouTube link → fetch caption track → timed cues (same shape as SRT/VTT)
@@ -160,15 +164,23 @@ type LoadedDocument =
   | { kind: "timed"; cues: { start: number; end: number; text: string }[] };
 
 interface SourceLoader {
-  type: "pdf" | "markdown" | "srt" | "vtt" | "youtube" | "webpage";
+  type: "pdf" | "markdown" | "srt" | "vtt" | "youtube" | "webpage" | "docx" | "csv" | "xlsx";
   load(input: { file?: File; url?: string }): Promise<LoadedDocument>;
 }
 ```
 
-- `pdf.ts` / `markdown.ts` / `webpage.ts` → `{ kind: "text" }`. The web page
-  loader needs readability-style extraction (strip nav/ads/scripts/
-  boilerplate) before the HTML is chunk-worthy — a raw DOM dump is not plain
-  text.
+- `pdf.ts` / `markdown.ts` / `webpage.ts` / `docx.ts` → `{ kind: "text" }`.
+  The web page loader needs readability-style extraction (strip nav/ads/
+  scripts/boilerplate) before the HTML is chunk-worthy — a raw DOM dump is
+  not plain text. `docx.ts` uses `mammoth`'s raw-text extraction, same shape
+  as `pdf.ts`.
+- `csv.ts` / `xlsx.ts` ✅ implemented → `{ kind: "text" }`. Share a
+  `spreadsheet.ts` core (`rowsToText`) the same way `srt.ts`/`vtt.ts` share
+  `cues.ts` — parsing differs per format (`csv-parse` vs `exceljs`), but
+  both turn tabular data into the same "Header: value, ..." sentence-per-row
+  text, which chunks and embeds far better than a raw grid dump would.
+  `xlsx.ts` labels each sheet (`Sheet: <name>`) so a multi-sheet workbook's
+  sections stay distinguishable after chunking.
 - `srt.ts` / `vtt.ts` → `{ kind: "timed" }`. SRT and VTT are near-identical
   cue formats (VTT adds a `WEBVTT` header and uses `.` instead of `,` in
   timestamps) — share one cue-parsing core with a thin per-format
@@ -184,9 +196,9 @@ interface SourceLoader {
   `end` as chunk metadata. The point: retrieval can cite "around 2:15" for a
   transcript source, which only survives if chunking preserves real
   timestamps rather than chunking by raw character count.
-- **Character/token-budget chunking** (PDF/Markdown/web page) — standard
-  fixed-size chunking with overlap; no inherent timestamp concept for these
-  source types.
+- **Character/token-budget chunking** (PDF/Markdown/web page/Word/CSV/Excel)
+  — standard fixed-size chunking with overlap; no inherent timestamp concept
+  for these source types.
 
 ### 2.3 Metadata
 Every ingested chunk carries at minimum `{ sourceType, sourceId, chunkIndex }`

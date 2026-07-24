@@ -8,11 +8,15 @@ import { SourceType } from "@/lib/ingestion/types"
 
 const MAX_FILE_BYTES = 20 * 1024 * 1024 // 20 MB
 
-const FILE_KINDS = new Set(["pdf", "markdown", "subtitles"])
+const FILE_KINDS = new Set(["pdf", "markdown", "subtitles", "docx", "spreadsheet"])
 const URL_KINDS = new Set(["youtube", "webpage"])
 
 function inferSubtitleType(fileName: string): "srt" | "vtt" {
   return /\.vtt$/i.test(fileName) ? "vtt" : "srt"
+}
+
+function inferSpreadsheetType(fileName: string): "csv" | "xlsx" {
+  return /\.csv$/i.test(fileName) ? "csv" : "xlsx"
 }
 
 function formatSize(bytes: number) {
@@ -49,7 +53,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "file too large (max 20 MB)" }, { status: 400 })
     }
 
-    sourceType = kind === "subtitles" ? inferSubtitleType(file.name) : (kind as SourceType)
+    sourceType =
+      kind === "subtitles"
+        ? inferSubtitleType(file.name)
+        : kind === "spreadsheet"
+          ? inferSpreadsheetType(file.name)
+          : (kind as SourceType)
     fileName = file.name
     label = file.name
     detail = formatSize(file.size)

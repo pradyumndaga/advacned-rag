@@ -1,5 +1,13 @@
 import * as React from "react"
-import { Captions, FileCode2, FileText, Globe, PlayCircle } from "lucide-react"
+import {
+  Captions,
+  FileCode2,
+  FileSpreadsheet,
+  FileText,
+  FileType2,
+  Globe,
+  PlayCircle,
+} from "lucide-react"
 import { SourceType } from "@/lib/ingestion/types"
 
 export const SOURCE_ICONS: Record<SourceType, React.ElementType> = {
@@ -9,6 +17,9 @@ export const SOURCE_ICONS: Record<SourceType, React.ElementType> = {
   vtt: Captions,
   youtube: PlayCircle,
   webpage: Globe,
+  docx: FileType2,
+  csv: FileSpreadsheet,
+  xlsx: FileSpreadsheet,
 }
 
 export const SOURCE_LABELS: Record<SourceType, string> = {
@@ -18,4 +29,7 @@ export const SOURCE_LABELS: Record<SourceType, string> = {
   vtt: "VTT",
   youtube: "YouTube",
   webpage: "Web page",
+  docx: "Word",
+  csv: "CSV",
+  xlsx: "Excel",
 }

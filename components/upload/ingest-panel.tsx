@@ -4,7 +4,9 @@ import * as React from "react"
 import {
   Captions,
   FileCode2,
+  FileSpreadsheet,
   FileText,
+  FileType2,
   Globe,
   Info,
   Loader2,
@@ -15,7 +17,14 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 
-export type UiSourceKind = "pdf" | "markdown" | "subtitles" | "youtube" | "webpage"
+export type UiSourceKind =
+  | "pdf"
+  | "markdown"
+  | "subtitles"
+  | "youtube"
+  | "webpage"
+  | "docx"
+  | "spreadsheet"
 
 interface SourceTypeConfig {
   kind: UiSourceKind
@@ -54,6 +63,26 @@ const SOURCE_TYPES: SourceTypeConfig[] = [
     input: "file",
     accept: ".srt,.vtt",
     matchesFile: (file) => /\.(srt|vtt)$/i.test(file.name),
+  },
+  {
+    kind: "docx",
+    title: "Word",
+    description: "Word documents (.docx).",
+    icon: FileType2,
+    input: "file",
+    accept:
+      ".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    matchesFile: (file) => /\.docx$/i.test(file.name),
+  },
+  {
+    kind: "spreadsheet",
+    title: "Spreadsheet",
+    description: "CSV & Excel files.",
+    icon: FileSpreadsheet,
+    input: "file",
+    accept:
+      ".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel",
+    matchesFile: (file) => /\.(csv|xlsx|xls)$/i.test(file.name),
   },
   {
     kind: "youtube",
