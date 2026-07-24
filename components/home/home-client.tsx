@@ -334,29 +334,24 @@ export function HomeClient({ isAdmin }: HomeClientProps) {
       </header>
 
       {/* Below md, this stacks into a single column — each panel needs an
-          explicit height in that mode since there's no shared row height to
-          stretch into like there is at md+, where the row's height comes
-          from the flex-1 parent instead. Chat is the main component: it's
-          the only thing in the second (flex-1) column, so it gets the full
-          height of the content area; ingest/resources/trace share the
-          first, fixed-width column instead. */}
+          explicit, non-growing height in that mode since there's no shared
+          row height to stretch into like there is at md+, where height
+          comes from the flex-1 parent instead. Every mobile section pairs
+          `shrink-0`/`min-h-0` with its fixed height: a flex child's default
+          `min-height: auto` otherwise lets its own content (an ever-growing
+          message list, a resource list) force it taller than the height
+          class actually says, which is what was pushing everything below
+          it further down the page as content accumulated. Chat comes first
+          in the DOM so mobile visitors see it immediately instead of
+          scrolling past setup panels first, and gets a generous
+          viewport-relative height (dvh, not vh — accounts for mobile
+          browser chrome) so it reads as the dominant surface immediately
+          rather than a small box above the "real" content; `md:order-*`
+          moves it back to the right of the sidebar once there's room for
+          both side by side, so DOM/reading order still matches what mobile
+          visitors actually see. */}
       <div className="flex flex-col gap-4 md:min-h-0 md:flex-1 md:flex-row">
-        <aside className="flex w-full flex-col gap-4 md:w-[300px] md:shrink-0 md:min-h-0">
-          <section className="shrink-0 rounded-xl border border-border bg-card p-3">
-            <IngestPanel onIngested={() => setResourceRefreshSignal((n) => n + 1)} />
-          </section>
-          <section className="h-72 min-w-0 overflow-hidden rounded-xl border border-border bg-card md:h-auto md:min-h-0 md:flex-1">
-            <ResourcePanel
-              refreshSignal={resourceRefreshSignal}
-              onSelect={(resourceId) => setPreviewTarget({ sourceId: resourceId })}
-            />
-          </section>
-          <section className="h-56 min-w-0 overflow-hidden rounded-xl border border-border bg-card md:h-64 md:shrink-0">
-            <TerminalPanel lines={lines} />
-          </section>
-        </aside>
-
-        <section className="h-96 min-w-0 flex-1 overflow-hidden rounded-xl border border-border bg-card md:h-auto md:min-h-0">
+        <section className="h-[65dvh] min-h-0 min-w-0 shrink-0 overflow-hidden rounded-xl border border-border bg-card md:order-2 md:h-auto md:min-h-0 md:flex-1 md:shrink">
           <ChatPanel
             messages={messages}
             onSendMessage={handleSendMessage}
@@ -369,6 +364,21 @@ export function HomeClient({ isAdmin }: HomeClientProps) {
             }
           />
         </section>
+
+        <aside className="flex w-full flex-col gap-4 md:order-1 md:w-[300px] md:shrink-0 md:min-h-0">
+          <section className="shrink-0 rounded-xl border border-border bg-card p-3">
+            <IngestPanel onIngested={() => setResourceRefreshSignal((n) => n + 1)} />
+          </section>
+          <section className="h-72 min-h-0 min-w-0 shrink-0 overflow-hidden rounded-xl border border-border bg-card md:h-auto md:min-h-0 md:flex-1 md:shrink">
+            <ResourcePanel
+              refreshSignal={resourceRefreshSignal}
+              onSelect={(resourceId) => setPreviewTarget({ sourceId: resourceId })}
+            />
+          </section>
+          <section className="h-56 min-h-0 min-w-0 shrink-0 overflow-hidden rounded-xl border border-border bg-card md:h-64 md:shrink-0">
+            <TerminalPanel lines={lines} />
+          </section>
+        </aside>
       </div>
 
       <ResourcePreview

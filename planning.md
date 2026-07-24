@@ -521,6 +521,34 @@ duplicating the source-type → icon mapping in both places.
   a permanently-300px sidebar it would have kept trying to force 5 columns
   into a container that can't fit them) in favor of a fixed 2-column grid
   that actually fits the sidebar.
+- **Mobile ordering + a real growth bug ✅ fixed**, per two follow-up rounds
+  of feedback on the rearrangement above:
+  - Chat was last in the single-column mobile stack (DOM order = visual
+    order below `md`), meaning mobile visitors scrolled past ingest,
+    resources, and pipeline-trace before reaching it. Chat's `<section>`
+    moved first in the DOM (mobile visual order now matches it directly —
+    also a reasonable "skip to main content" order for screen readers);
+    `md:order-2` (paired with `md:order-1` on the sidebar `<aside>`) moves it
+    back to the right of the sidebar once there's room for both side by
+    side, so desktop is unaffected.
+  - Reordering surfaced a second, real bug: the mobile chat card visibly
+    grew taller as messages accumulated, pushing the ingest panel further
+    down with every exchange — confirmed live (`getBoundingClientRect()`
+    before/after sending a message) that the card's height was NOT stable.
+    Cause: the card combined a fixed height class with `flex-1` — `flex-1`
+    sets `flex-basis: 0%`, which can override a sibling explicit-height
+    utility as the flex algorithm's actual basis, and a flex item's default
+    `min-height: auto` then lets its own content demand more space than the
+    fixed height intended, rather than being clipped. Fixed by making every
+    fixed-height mobile section (chat, resources, pipeline-trace) pair its
+    height class with `shrink-0 min-h-0`, and only opting back into
+    `flex-1`/shrink at `md:` where the row layout actually wants it to grow.
+    Re-verified live: identical height (433.5px) before and after a real
+    message round-trip.
+  - Chat's mobile height also grew from a fixed `h-96` (384px — reported as
+    "very small" for the primary surface) to `h-[65dvh]` — `dvh` rather than
+    `vh` specifically to account for mobile browsers' collapsing/expanding
+    address-bar chrome, which `vh` doesn't.
 - **Resource type made explicit ✅ implemented**, per explicit feedback that
   the source-type icon alone (14px, `SOURCE_ICONS`) was easy to miss.
   `components/resources/source-icon.tsx` gained `SOURCE_LABELS` (a
