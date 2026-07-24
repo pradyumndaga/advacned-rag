@@ -73,6 +73,18 @@ export async function fetchChunksBySource(sourceId: string, userId: string): Pro
     .sort((a, b) => a.chunkIndex - b.chunkIndex)
 }
 
+export async function deleteChunksBySource(sourceId: string, userId: string): Promise<void> {
+  await ensureCollection()
+  await getClient().delete(COLLECTION, {
+    filter: {
+      must: [
+        { key: "sourceId", match: { value: sourceId } },
+        { key: "userId", match: { value: userId } },
+      ],
+    },
+  })
+}
+
 export interface ChunkMatch {
   id: string
   score: number

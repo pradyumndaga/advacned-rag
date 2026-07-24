@@ -26,6 +26,12 @@ export async function updateResource(
   return updated
 }
 
+export async function deleteResource(id: string, userId: string): Promise<void> {
+  const redis = getRedisConnection()
+  await redis.del(KEY_PREFIX + id)
+  await redis.zrem(indexKey(userId), id)
+}
+
 export async function listResources(userId: string): Promise<Resource[]> {
   const redis = getRedisConnection()
   const ids = await redis.zrevrange(indexKey(userId), 0, -1)

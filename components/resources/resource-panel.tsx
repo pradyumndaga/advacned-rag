@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Loader2 } from "lucide-react"
+import { Loader2, Trash2 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { Resource, ResourceStatus } from "@/lib/ingestion/types"
@@ -45,6 +45,8 @@ interface ResourcePanelProps {
 
 export function ResourcePanel({ refreshSignal, onSelect }: ResourcePanelProps) {
   const [resources, setResources] = React.useState<Resource[]>([])
+  const [confirmingId, setConfirmingId] = React.useState<string | null>(null)
+  const [deletingId, setDeletingId] = React.useState<string | null>(null)
 
   const fetchResources = React.useCallback(async () => {
     try {
@@ -75,6 +77,21 @@ export function ResourcePanel({ refreshSignal, onSelect }: ResourcePanelProps) {
     return () => clearInterval(interval)
   }, [resources, fetchResources])
 
+  async function handleDelete(id: string) {
+    if (confirmingId !== id) {
+      setConfirmingId(id)
+      return
+    }
+    setConfirmingId(null)
+    setDeletingId(id)
+    try {
+      await fetch(`/api/resources/${id}`, { method: "DELETE" })
+      setResources((prev) => prev.filter((r) => r.id !== id))
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
   const grouped = GROUPS.map((group) => ({
     ...group,
     items: resources.filter((r) => displayGroup(r.status) === group.key),
@@ -101,28 +118,53 @@ export function ResourcePanel({ refreshSignal, onSelect }: ResourcePanelProps) {
                 {group.items.map((resource) => {
                   const Icon = SOURCE_ICONS[resource.kind]
                   const clickable = resource.status === "ready"
+                  const isConfirming = confirmingId === resource.id
+                  const isDeleting = deletingId === resource.id
                   return (
-                    <button
+                    <div
                       key={resource.id}
-                      type="button"
-                      disabled={!clickable}
-                      onClick={() => onSelect(resource.id)}
-                      title={
-                        resource.status === "failed"
-                          ? resource.error
-                          : undefined
-                      }
                       className={cn(
-                        "flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors",
-                        clickable
-                          ? "cursor-pointer hover:bg-muted/60"
-                          : "cursor-default opacity-70"
+                        "group flex items-center gap-1 rounded-lg px-2 py-1.5 transition-colors",
+                        isConfirming && "bg-red-500/10"
                       )}
                     >
-                      <Icon className="size-3.5 shrink-0 text-muted-foreground" />
-                      <span className="flex-1 truncate">{resource.label}</span>
-                      <StatusDot status={resource.status} />
-                    </button>
+                      <div
+                        role="button"
+                        tabIndex={clickable ? 0 : -1}
+                        onClick={() => clickable && onSelect(resource.id)}
+                        onKeyDown={(e) => {
+                          if (clickable && (e.key === "Enter" || e.key === " ")) {
+                            e.preventDefault()
+                            onSelect(resource.id)
+                          }
+                        }}
+                        title={resource.status === "failed" ? resource.error : undefined}
+                        className={cn(
+                          "flex min-w-0 flex-1 items-center gap-2 text-left text-xs",
+                          clickable ? "cursor-pointer" : "cursor-default opacity-70"
+                        )}
+                      >
+                        <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+                        <span className="flex-1 truncate">{resource.label}</span>
+                        <StatusDot status={resource.status} />
+                      </div>
+                      <button
+                        type="button"
+                        disabled={isDeleting}
+                        onClick={() => handleDelete(resource.id)}
+                        onBlur={() => setConfirmingId((id) => (id === resource.id ? null : id))}
+                        title={isConfirming ? "Click again to confirm delete" : "Delete"}
+                        className={cn(
+                          "shrink-0 rounded p-1 text-xs transition-opacity",
+                          isConfirming
+                            ? "font-medium text-red-400 opacity-100"
+                            : "text-muted-foreground opacity-0 hover:bg-red-500/10 hover:text-red-400 group-hover:opacity-100",
+                          isDeleting && "pointer-events-none opacity-50"
+                        )}
+                      >
+                        {isConfirming ? "Confirm?" : <Trash2 className="size-3.5" />}
+                      </button>
+                    </div>
                   )
                 })}
               </div>

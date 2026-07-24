@@ -2,9 +2,9 @@ import { describe, expect, it, vi } from "vitest"
 import { Resource } from "./types"
 
 // A minimal in-memory stand-in for ioredis, implementing only the exact
-// calls resource-store.ts makes (get/set/zadd/zrevrange/mget) — enough to
-// exercise real state transitions without a real Redis instance. Keyed
-// properly (unlike a single shared index) so per-user index scoping
+// calls resource-store.ts makes (get/set/del/zadd/zrem/zrevrange/mget) —
+// enough to exercise real state transitions without a real Redis instance.
+// Keyed properly (unlike a single shared index) so per-user index scoping
 // (resources:index:<userId>) can actually be tested.
 function createFakeRedis() {
   const store = new Map<string, string>()
@@ -27,9 +27,15 @@ function createFakeRedis() {
       store.set(key, value)
       return "OK"
     },
+    async del(key: string) {
+      return store.delete(key) ? 1 : 0
+    },
     async zadd(key: string, score: number, member: string) {
       getIndex(key).set(member, score)
       return 1
+    },
+    async zrem(key: string, member: string) {
+      return getIndex(key).delete(member) ? 1 : 0
     },
     async zrevrange(key: string, ...rest: [number, number]) {
       void rest
@@ -47,7 +53,7 @@ vi.mock("@/lib/queue/connection", () => ({
   getRedisConnection: () => fakeRedis,
 }))
 
-import { createResource, getResource, updateResource, listResources } from "./resource-store"
+import { createResource, deleteResource, getResource, updateResource, listResources } from "./resource-store"
 
 function makeResource(overrides: Partial<Resource> = {}): Resource {
   const now = Date.now()
@@ -132,5 +138,18 @@ describe("resource-store", () => {
 
     expect(myList.map((r) => r.id)).toEqual(["isolated-mine"])
     expect(theirList.map((r) => r.id)).toEqual(["isolated-theirs"])
+  })
+
+  it("deletes a resource: removes the record and drops it from its owner's list", async () => {
+    const resource = makeResource({ id: "delete-me", userId: "delete-user" })
+    const other = makeResource({ id: "keep-me", userId: "delete-user" })
+    await createResource(resource)
+    await createResource(other)
+
+    await deleteResource("delete-me", "delete-user")
+
+    expect(await getResource("delete-me")).toBeNull()
+    const remaining = await listResources("delete-user")
+    expect(remaining.map((r) => r.id)).toEqual(["keep-me"])
   })
 })

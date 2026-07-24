@@ -624,11 +624,27 @@ chat, which was refused and never written anywhere.
   straightforward filter, already exercised by real Qdrant/Redis calls
   above.)
 
-### Phase 15 — Resource deletion (not started)
-- `DELETE /api/resources/[id]` — verify the resource belongs to the
-  requesting user (depends on Phase 14), delete its Qdrant points
-  (filter-delete by `sourceId`), remove it from the Redis index.
-- UI: delete action in `components/resources/resource-panel.tsx`.
+### Phase 15 — Resource deletion ✅ implemented and verified
+- `lib/db/qdrant.ts`: `deleteChunksBySource(sourceId, userId)` — filter-delete
+  by both fields, same ownership-scoping as the read path.
+- `lib/ingestion/resource-store.ts`: `deleteResource(id, userId)` — removes
+  the `resource:<id>` key and drops it from `resources:index:<userId>`.
+- `DELETE /api/resources/[id]`: same ownership check and 404-for-both
+  pattern as the existing `GET` handler, then deletes Qdrant chunks before
+  the Redis record.
+- UI (`components/resources/resource-panel.tsx`): a trash icon, hidden
+  until hover, next to each resource. Click once → row highlights red and
+  the icon becomes a "Confirm?" label; click again within the same
+  interaction to actually delete. Restructured each row from a single
+  `<button>` into a `<div role="button">` (selection) plus a sibling
+  `<button>` (delete) — a `<button>` can't contain another `<button>`.
+- Verified live: uploaded a fresh resource, confirmed the first click on
+  delete only shows the confirm state (resource still listed, still
+  `Ready`), the second click actually removes it from the panel, and a
+  direct Qdrant query for that `sourceId` afterward returns zero points —
+  the vector data is genuinely gone, not just hidden client-side.
+- Added a Vitest case covering `deleteResource` (record removed, dropped
+  from its owner's list, unrelated resources untouched).
 
 ### Phase 16 — Chat usage cap, 10 free chats (not started)
 - Redis counter per user, incremented on each successful `/api/chat` call.
