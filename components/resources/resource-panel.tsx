@@ -4,8 +4,9 @@ import * as React from "react"
 import { Loader2, Trash2 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { Badge } from "@/components/ui/badge"
 import { Resource, ResourceStatus } from "@/lib/ingestion/types"
-import { SOURCE_ICONS } from "./source-icon"
+import { SOURCE_ICONS, SOURCE_LABELS } from "./source-icon"
 
 type VisibleGroup = "queued" | "processing" | "ready"
 
@@ -146,6 +147,9 @@ export function ResourcePanel({ refreshSignal, onSelect }: ResourcePanelProps) {
                       >
                         <Icon className="size-3.5 shrink-0 text-muted-foreground" />
                         <span className="flex-1 truncate">{resource.label}</span>
+                        <Badge variant="outline" className="shrink-0 text-[10px] font-normal text-muted-foreground">
+                          {SOURCE_LABELS[resource.kind]}
+                        </Badge>
                         <StatusDot status={resource.status} />
                       </div>
                       <button

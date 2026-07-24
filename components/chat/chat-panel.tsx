@@ -159,7 +159,12 @@ export function ChatPanel({ messages, onSendMessage, onCiteClick, usage }: ChatP
                   </Avatar>
                   <div
                     className={cn(
-                      "max-w-[75%] rounded-xl px-3 py-2 text-sm whitespace-pre-wrap",
+                      // A percentage max-width here would resolve against
+                      // this row's own shrink-to-fit width (it doesn't
+                      // stretch, per the wrapper's items-end/items-start) —
+                      // circular, and collapses to a tiny bubble regardless
+                      // of content. A fixed cap sidesteps that entirely.
+                      "max-w-[32rem] rounded-xl px-3 py-2 text-sm whitespace-pre-wrap",
                       message.role === "user"
                         ? "bg-primary text-primary-foreground"
                         : "bg-muted text-foreground"

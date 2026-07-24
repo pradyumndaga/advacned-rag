@@ -467,6 +467,43 @@ duplicating the source-type → icon mapping in both places.
   `[220px_minmax(0,2fr)_minmax(0,1fr)]` so chat gets roughly double the
   trace panel's width, with the height reclaimed from the upload row
   flowing to chat/resources/trace via the existing `flex-1` container.
+- **Chat given the full content height ✅ implemented**, per a later explicit
+  request that chat — "the main component" — shouldn't just get more width,
+  it should get the full height too. Restructured from a 3-column grid (all
+  three panels sharing one row's height) to a 2-column flex layout: a
+  fixed-width (`300px`) left sidebar stacking ingest, resources, and
+  pipeline-trace vertically (`components/home/home-client.tsx`), and chat
+  alone in the remaining flexible column, so it spans the full height of
+  the content area uninterrupted by neighbors instead of matching their
+  height. `IngestPanel`'s tile grid dropped its `sm:grid-cols-5` viewport
+  breakpoint (`sm:` refers to viewport width, not container width — inside
+  a permanently-300px sidebar it would have kept trying to force 5 columns
+  into a container that can't fit them) in favor of a fixed 2-column grid
+  that actually fits the sidebar.
+- **Resource type made explicit ✅ implemented**, per explicit feedback that
+  the source-type icon alone (14px, `SOURCE_ICONS`) was easy to miss.
+  `components/resources/source-icon.tsx` gained `SOURCE_LABELS` (a
+  `SourceType → display string` map, e.g. `youtube → "YouTube"`,
+  `webpage → "Web page"`), rendered as a small outline `Badge` on each
+  resource row in `resource-panel.tsx`, between the truncated label and the
+  status dot.
+- **User chat-bubble width bug ✅ fixed**, found immediately after the
+  height rearrangement above: user messages (right-aligned via `items-end`)
+  were rendering at a tiny, content-unrelated width — e.g. "Who is Roger?"
+  wrapped to two lines despite acres of free space beside it. Root cause:
+  `max-w-[75%]` on the bubble resolved against its immediate row div, which
+  itself is shrink-to-fit (not stretched, since `items-end` overrides the
+  flex column's default `stretch`) — a percentage against an
+  indeterminate/shrink-to-fit container is a known CSS trap, and it
+  collapsed to roughly "avatar + gap" with the bubble's own content
+  contributing nothing to the calculation (confirmed live: row computed to
+  153px, bubble to exactly 75% of that — 115px — regardless of text
+  length). Assistant bubbles never showed this because their row isn't
+  reversed/end-aligned, so it stretches to the full width and the
+  percentage resolves against something real. Fixed by swapping the
+  percentage for a fixed `max-w-[32rem]`, which sidesteps the
+  indeterminate-container case entirely — verified live, exact same message
+  now renders on one line at a sensible width.
 
 ## Phase 12 — Testing ✅ implemented
 Added after Phases 0–11 were already working end-to-end for a real query,

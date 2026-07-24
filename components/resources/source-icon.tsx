@@ -10,3 +10,12 @@ export const SOURCE_ICONS: Record<SourceType, React.ElementType> = {
   youtube: PlayCircle,
   webpage: Globe,
 }
+
+export const SOURCE_LABELS: Record<SourceType, string> = {
+  pdf: "PDF",
+  markdown: "Markdown",
+  srt: "SRT",
+  vtt: "VTT",
+  youtube: "YouTube",
+  webpage: "Web page",
+}

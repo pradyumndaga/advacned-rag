@@ -333,23 +333,30 @@ export function HomeClient({ isAdmin }: HomeClientProps) {
         </div>
       </header>
 
-      <section className="rounded-xl border border-border bg-card p-3">
-        <IngestPanel onIngested={() => setResourceRefreshSignal((n) => n + 1)} />
-      </section>
+      {/* Below md, this stacks into a single column — each panel needs an
+          explicit height in that mode since there's no shared row height to
+          stretch into like there is at md+, where the row's height comes
+          from the flex-1 parent instead. Chat is the main component: it's
+          the only thing in the second (flex-1) column, so it gets the full
+          height of the content area; ingest/resources/trace share the
+          first, fixed-width column instead. */}
+      <div className="flex flex-col gap-4 md:min-h-0 md:flex-1 md:flex-row">
+        <aside className="flex w-full flex-col gap-4 md:w-[300px] md:shrink-0 md:min-h-0">
+          <section className="shrink-0 rounded-xl border border-border bg-card p-3">
+            <IngestPanel onIngested={() => setResourceRefreshSignal((n) => n + 1)} />
+          </section>
+          <section className="h-72 min-w-0 overflow-hidden rounded-xl border border-border bg-card md:h-auto md:min-h-0 md:flex-1">
+            <ResourcePanel
+              refreshSignal={resourceRefreshSignal}
+              onSelect={(resourceId) => setPreviewTarget({ sourceId: resourceId })}
+            />
+          </section>
+          <section className="h-56 min-w-0 overflow-hidden rounded-xl border border-border bg-card md:h-64 md:shrink-0">
+            <TerminalPanel lines={lines} />
+          </section>
+        </aside>
 
-      {/* Below md, this grid falls back to a single column (3 stacked
-          rows) — each panel needs an explicit height in that mode since
-          there's no shared row height to stretch into like there is when
-          they're laid out side by side. At md+, height comes from the grid
-          row via the flex-1 parent instead, so it's reset to auto there. */}
-      <div className="grid grid-cols-1 gap-4 md:min-h-0 md:flex-1 md:grid-cols-[220px_minmax(0,2fr)_minmax(0,1fr)]">
-        <section className="h-80 min-w-0 overflow-hidden rounded-xl border border-border bg-card md:h-auto md:min-h-0">
-          <ResourcePanel
-            refreshSignal={resourceRefreshSignal}
-            onSelect={(resourceId) => setPreviewTarget({ sourceId: resourceId })}
-          />
-        </section>
-        <section className="h-96 min-w-0 overflow-hidden rounded-xl border border-border bg-card md:h-auto md:min-h-0">
+        <section className="h-96 min-w-0 flex-1 overflow-hidden rounded-xl border border-border bg-card md:h-auto md:min-h-0">
           <ChatPanel
             messages={messages}
             onSendMessage={handleSendMessage}
@@ -361,9 +368,6 @@ export function HomeClient({ isAdmin }: HomeClientProps) {
               })
             }
           />
-        </section>
-        <section className="h-80 min-w-0 md:h-auto md:min-h-0">
-          <TerminalPanel lines={lines} />
         </section>
       </div>
 

@@ -160,7 +160,7 @@ export function IngestPanel({ onIngested }: IngestPanelProps) {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2">
         {SOURCE_TYPES.map((type) => {
           const Icon = type.icon
           const isFile = type.input === "file"
