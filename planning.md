@@ -222,16 +222,37 @@ needed a different amount of new infrastructure:
   streaming `blob.stream` through as the response body. `DELETE
   /api/resources/[id]` now also deletes the blob (`deletePdfBlob`)
   alongside its existing Redis+Qdrant cleanup.
-- A citation click (`target.chunkId` set) always falls back to the
-  existing chunk-highlight view regardless of kind — "jump to this exact
-  passage" only makes sense against chunks, so the richer kind-specific
-  preview only applies when opening a resource directly from the panel.
+- A citation click (`target.chunkId` set) falls back to the existing
+  chunk-highlight view for every kind **except YouTube** — "jump to this
+  exact passage" is better served there by seeking the real video, so
+  YouTube always uses its embed regardless of entry point (panel click or
+  citation click).
+- **YouTube citation seek ✅ implemented.** When a citation's cited chunk
+  has a `startTime`, the embed src becomes
+  `youtube.com/embed/<id>?start=<seconds>` (rounded down), so clicking a
+  citation on a YouTube source jumps the actual video to that moment
+  instead of just showing transcript text. The cited chunk's text is also
+  shown as a highlighted caption underneath the player (same visual
+  treatment as the chunk-highlight view) so the exact wording that was
+  cited is still visible. The iframe is keyed on the start time so
+  re-clicking a different citation while the dialog is already open
+  reliably reloads the player at the new position instead of silently
+  no-opping on an unchanged `src`.
+- Both citation entry points — the inline `[N]` chip in the answer text and
+  the deduped "sources used" chip row underneath — call the same
+  `onCiteClick` handler, so this applies identically regardless of which
+  one was clicked.
 - Verified live: YouTube embed rendered a real thumbnail/player; webpage
   showed the "Open original page" button; a test Markdown file rendered as
   one full block via `rawText`; a test PDF rendered in the browser's native
   PDF viewer via the authenticated Blob-streaming route; deleting the PDF
   resource was confirmed (via `vercel blob list`) to actually remove the
-  blob from the store, not just hide it client-side.
+  blob from the store, not just hide it client-side. For the citation-seek
+  behavior specifically: asked a real question against an already-indexed
+  YouTube resource, clicked the resulting "sources used" chip, and
+  confirmed via `document.querySelector('iframe').src` that the rendered
+  embed URL was `youtube.com/embed/<id>?start=1`, matching the cited
+  chunk's actual `startTime`.
 
 ## Phase 6 — Route adaptor + multi-DB retrieval ✅ implemented
 - `lib/retrieval/adapters/types.ts`: `RetrievalAdapter` interface.

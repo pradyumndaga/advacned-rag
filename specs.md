@@ -282,22 +282,32 @@ interface ResourcePreviewTarget {
 }
 ```
 
-When opened via a citation (`chunkId` set), preview content is always
+When opened via a citation (`chunkId` set), preview content is
 *reconstructed from the chunks already stored in the vector DB* — filter by
 `metadata.sourceId`, sort by `metadata.chunkIndex`, concatenate — since
-"jump to this exact passage" only makes sense against chunks regardless of
-source type. Rendering differs by the source's original shape (§2.1) in
-this mode: plain-text sources (PDF/Markdown/web page) render as
-reconstructed text scrolled to the cited chunk; timed sources (SRT/VTT/
-YouTube) render as a transcript with visible timestamps, scrolled to and
-highlighting the cited chunk's `startTime`–`endTime` window.
+"jump to this exact passage" only makes sense against chunks. Rendering
+differs by the source's original shape (§2.1) in this mode: plain-text
+sources (PDF/Markdown/web page) render as reconstructed text scrolled to
+the cited chunk; SRT/VTT render as a transcript with visible timestamps,
+scrolled to and highlighting the cited chunk's `startTime`–`endTime`
+window. **YouTube is the one exception ✅ implemented** — "jump to this
+exact passage" is better served by seeking the actual video, so a YouTube
+citation always opens the real embed (below) with
+`?start=<Math.floor(startTime)>` appended to the src, plus the cited
+chunk's text shown as a highlighted caption underneath the player for the
+exact wording. Both citation entry points — the inline `[N]` chip and the
+deduped "sources used" chip row — call the same handler, so this applies
+regardless of which one was clicked. The iframe is keyed on the start time
+so clicking a different citation while the dialog is already open reloads
+the player at the new position rather than no-opping on an unchanged `src`.
 
 **Opened directly from the panel (no `chunkId`) ✅ implemented**, each
 source type instead shows its real original content — reusing §2.3's
 `rawText`/`fileUrl` fields where they exist, falling back to the
 chunk-reconstruction view otherwise:
-- **YouTube** — a real `youtube.com/embed/<id>` iframe. No new storage
-  needed: the video ID is parsed straight out of the URL already sitting in
+- **YouTube** — a real `youtube.com/embed/<id>` iframe (same as the citation
+  case above, just without a `start` param). No new storage needed: the
+  video ID is parsed straight out of the URL already sitting in
   `Resource.label`.
 - **Web page** — most sites block being iframed (`X-Frame-Options`), so
   this renders an "Open original page" link instead of attempting an embed

@@ -76,22 +76,27 @@ export function ResourcePreview({ target, onOpenChange }: ResourcePreviewProps) 
 
   const isTimed = chunks.some((c) => c.startTime !== undefined)
   const youtubeVideoId = resource?.kind === "youtube" ? extractYoutubeVideoId(resource.label) : null
+  const citedChunk = target?.chunkId
+    ? chunks.find((c) => String(c.chunkIndex) === target.chunkId)
+    : undefined
 
-  // A citation click (target.chunkId set) always means "jump to this exact
-  // passage" — that only makes sense against the chunk view, regardless of
-  // kind. Opening a resource directly from the panel (no chunkId) is when
-  // the richer, kind-specific preview applies.
-  const mode: "youtube" | "webpage" | "pdf" | "rawText" | "chunks" = target?.chunkId
-    ? "chunks"
-    : resource?.kind === "youtube" && youtubeVideoId
+  // A citation click (target.chunkId set) generally means "jump to this
+  // exact passage," which for every other kind means the chunk-highlight
+  // view — but for YouTube it means something better: seek the real video
+  // to the cited moment (see the "youtube" render branch below), so
+  // YouTube always takes the richer preview regardless of entry point.
+  const mode: "youtube" | "webpage" | "pdf" | "rawText" | "chunks" =
+    resource?.kind === "youtube" && youtubeVideoId
       ? "youtube"
-      : resource?.kind === "webpage"
-        ? "webpage"
-        : resource?.kind === "pdf" && resource.fileUrl
-          ? "pdf"
-          : resource?.kind === "markdown" && resource.rawText
-            ? "rawText"
-            : "chunks"
+      : target?.chunkId
+        ? "chunks"
+        : resource?.kind === "webpage"
+          ? "webpage"
+          : resource?.kind === "pdf" && resource.fileUrl
+            ? "pdf"
+            : resource?.kind === "markdown" && resource.rawText
+              ? "rawText"
+              : "chunks"
 
   return (
     <Dialog open={Boolean(target)} onOpenChange={onOpenChange}>
@@ -112,14 +117,27 @@ export function ResourcePreview({ target, onOpenChange }: ResourcePreviewProps) 
         )}
 
         {!loading && mode === "youtube" && (
-          <div className="aspect-video w-full overflow-hidden rounded-lg">
-            <iframe
-              className="h-full w-full"
-              src={`https://www.youtube.com/embed/${youtubeVideoId}`}
-              title={resource?.label}
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-              allowFullScreen
-            />
+          <div className="flex flex-col gap-3">
+            <div className="aspect-video w-full overflow-hidden rounded-lg">
+              <iframe
+                key={citedChunk?.startTime ?? "start"}
+                className="h-full w-full"
+                src={`https://www.youtube.com/embed/${youtubeVideoId}${
+                  citedChunk?.startTime !== undefined ? `?start=${Math.floor(citedChunk.startTime)}` : ""
+                }`}
+                title={resource?.label}
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+              />
+            </div>
+            {citedChunk && (
+              <div className="flex gap-3 rounded-lg bg-amber-500/10 p-2 text-sm ring-1 ring-amber-500/40">
+                <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                  {formatTime(citedChunk.startTime ?? 0)}
+                </span>
+                <p className="text-foreground/90">{citedChunk.text}</p>
+              </div>
+            )}
           </div>
         )}
 
