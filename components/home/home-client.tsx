@@ -1,9 +1,12 @@
 "use client"
 
 import * as React from "react"
+import Link from "next/link"
 import { UserButton } from "@clerk/nextjs"
+import { ShieldCheck } from "lucide-react"
 
 import { ChatPanel, type ChatMessage, type ChatUsage } from "@/components/chat/chat-panel"
+import { Button } from "@/components/ui/button"
 import { ModeToggle } from "@/components/mode-toggle"
 import {
   TerminalPanel,
@@ -32,7 +35,11 @@ function timestamp() {
   return new Date().toLocaleTimeString("en-US", { hour12: false })
 }
 
-export function HomeClient() {
+interface HomeClientProps {
+  isAdmin?: boolean
+}
+
+export function HomeClient({ isAdmin }: HomeClientProps) {
   const [messages, setMessages] = React.useState<ChatMessage[]>([
     {
       id: "welcome",
@@ -308,6 +315,19 @@ export function HomeClient() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          {isAdmin && (
+            <Button
+              variant="outline"
+              size="sm"
+              nativeButton={false}
+              render={
+                <Link href="/admin">
+                  <ShieldCheck />
+                  Admin
+                </Link>
+              }
+            />
+          )}
           <ModeToggle />
           <UserButton />
         </div>

@@ -633,3 +633,16 @@ query — refused, low-confidence, or successful — so the limit can't be
 gamed by asking disallowed questions. `GET /api/usage` exposes the current
 count for the initial page load. The chat UI surfaces a live "`N/10 chats
 used`" badge and disables input at the limit; unlimited users see neither.
+
+**Admin dashboard ✅ implemented.** `lib/admin/is-admin.ts` checks a
+comma-separated `ADMIN_EMAILS` allowlist against the signed-in user's real
+email (fetched via `currentUser()`, not the session JWT — Clerk's default
+token doesn't carry email as a claim). `/admin` (`app/admin/page.tsx`)
+protects itself the same way every other page does, then redirects non-admins
+to `/`. `lib/admin/user-summary.ts` joins Clerk's user list with each user's
+Redis resource count and chat usage. `GET /api/admin/users` and
+`PATCH /api/admin/users/[id]` are both admin-gated (403, not the
+ownership-hiding 404 pattern — there's no ambiguity to hide for a role
+check); the `PATCH` route is the only "upgrade" action and simply calls
+`setUnlimited`, matching the confirmed scope (removes the chat cap, no
+other tier concept, no billing).

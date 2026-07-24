@@ -684,14 +684,47 @@ chat, which was refused and never written anywhere.
   `0/10`/not-unlimited, counter increments and is reflected in
   `getChatUsage`, no cross-user leakage, `setUnlimited` toggles both ways.
 
-### Phase 17 — Admin dashboard (not started)
-- Admin allowlist via an `ADMIN_EMAILS` env var (starting value:
-  `pradyumndaga28@gmail.com`, entered as an env var, never as a hardcoded
-  password anywhere).
-- `/admin` page: Server Component, `await auth.protect()` plus an email
-  check against the allowlist (403/redirect if not admin).
-- Lists every user (via Clerk's backend `clerkClient.users.getUserList()`)
-  alongside their resource count and chat usage count (Redis).
-- "Upgrade" action per user: sets their `unlimited` flag (Redis or Clerk
-  `publicMetadata`), exempting them from the Phase 16 cap. No other tier
-  concept, per the confirmed scope above.
+### Phase 17 — Admin dashboard ✅ implemented and verified
+- `lib/admin/is-admin.ts`: `isAdminEmail(email)` checks a comma-separated
+  `ADMIN_EMAILS` env var (case-insensitive, whitespace-trimmed), entered as
+  an env var and never as a hardcoded password anywhere.
+  `isCurrentUserAdmin()` derives the signed-in user's admin status from
+  `currentUser()` (a real Backend API call), not from the session JWT's
+  claims — Clerk's default session token doesn't include email unless a
+  custom claim is configured, so trusting `sessionClaims` would have
+  silently denied every admin.
+- `lib/admin/user-summary.ts`: `listUsersWithUsage()` joins Clerk's user
+  roster (`clerkClient().users.getUserList({ limit: 500 })`) with each
+  user's Redis-backed resource count (`listResources`) and chat usage
+  (`getChatUsage`) by `userId`.
+- `app/admin/page.tsx`: Server Component — `await auth.protect()`, then
+  `redirect("/")` if `isCurrentUserAdmin()` is false, otherwise fetches
+  `listUsersWithUsage()` directly (no self-fetch round trip) and renders
+  `AdminClient`.
+- `GET /api/admin/users` and `PATCH /api/admin/users/[id]`: both gated by
+  the same `isCurrentUserAdmin()` check (403 if not admin, distinct from
+  the resource-ownership 404 pattern — there's no ownership ambiguity to
+  hide for a role check). The `PATCH` route calls `setUnlimited(id,
+  unlimited)`, the only "upgrade" action — removes the Phase 16 chat cap,
+  no other tier concept, per the confirmed scope.
+- UI (`components/admin/admin-client.tsx`): shadcn `Table` listing every
+  user's name/email, resource count, chat usage, a status `Badge`
+  (Free/Limit reached/Unlimited), and a `Switch` per row that PATCHes the
+  unlimited flag with an optimistic update (reverted on failure). Installed
+  `table` and `switch` via the shadcn CLI rather than hand-rolling them.
+  `components/home/home-client.tsx` shows an "Admin" button (shadcn
+  `Button` rendered as a `next/link` via the `render` prop, with
+  `nativeButton={false}` since it's an anchor not a native button) only
+  when `app/page.tsx`'s server-side `isCurrentUserAdmin()` check passes.
+- Verified live: signed in as a non-admin, confirmed `/admin` redirects to
+  `/`. Temporarily added a second email to `ADMIN_EMAILS` to test the
+  admin-recognized path without needing the real admin's Google OAuth
+  flow — confirmed the table renders both real Clerk users with correct
+  resource/usage data, the "Admin" header button appears, and toggling the
+  `Unlimited` switch persists to Redis and correctly bypasses the Phase 16
+  cap in the live chat UI (badge disappears, input re-enables). Reverted
+  the temporary allowlist addition and cleared all test-induced Redis state
+  afterward.
+- Added `lib/admin/is-admin.test.ts`: `isAdminEmail` case-insensitivity,
+  comma-separated allowlist with whitespace, rejection of a non-listed or
+  empty allowlist, and null/undefined email handling.
