@@ -5,6 +5,7 @@ import { outputGuardRails } from "@/lib/guardrails/output";
 import { transformQuery } from "@/lib/query-transform";
 import { runCragLoop } from "@/lib/crag/orchestrate";
 import { getResource } from "@/lib/ingestion/resource-store";
+import { getChatUsage, incrementChatUsage } from "@/lib/usage/chat-usage";
 import { Citation } from "@/lib/types";
 import { SourceType } from "@/lib/ingestion/types";
 
@@ -20,9 +21,24 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "query is required" }, { status: 400 });
   }
 
+  const usageBefore = await getChatUsage(userId);
+  if (usageBefore.count >= usageBefore.limit && !usageBefore.unlimited) {
+    return NextResponse.json(
+      { limitReached: true, usage: usageBefore },
+      { status: 403 }
+    );
+  }
+
+  // Every submitted query counts against the free-chat cap regardless of
+  // guardrail outcome — what's metered is uses of the chat interface, not
+  // just successful answers, so this can't be gamed by asking disallowed
+  // questions to avoid spending quota.
+  const count = await incrementChatUsage(userId);
+  const usage = { count, limit: usageBefore.limit, unlimited: usageBefore.unlimited };
+
   const inputGuard = await inputGuardRails(query);
   if (!inputGuard.passed) {
-    return NextResponse.json({ refused: true, reason: inputGuard.reason }, { status: 400 });
+    return NextResponse.json({ refused: true, reason: inputGuard.reason, usage }, { status: 400 });
   }
 
   const transformedQueries = await transformQuery(query);
@@ -78,5 +94,6 @@ export async function POST(request: Request) {
       reason: outputGuard.reason,
     },
     citations,
+    usage,
   });
 }

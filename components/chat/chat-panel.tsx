@@ -19,10 +19,17 @@ export interface ChatMessage {
   lowConfidence?: boolean
 }
 
+export interface ChatUsage {
+  count: number
+  limit: number
+  unlimited: boolean
+}
+
 interface ChatPanelProps {
   messages: ChatMessage[]
   onSendMessage: (content: string) => void
   onCiteClick?: (citation: Citation) => void
+  usage?: ChatUsage
 }
 
 // The model is instructed to cite passages inline as "[1]", "[2]", etc.,
@@ -91,9 +98,10 @@ function usedSources(content: string, citations: Citation[] | undefined): Citati
   return used
 }
 
-export function ChatPanel({ messages, onSendMessage, onCiteClick }: ChatPanelProps) {
+export function ChatPanel({ messages, onSendMessage, onCiteClick, usage }: ChatPanelProps) {
   const [value, setValue] = React.useState("")
   const viewportRef = React.useRef<HTMLDivElement>(null)
+  const limitReached = Boolean(usage && !usage.unlimited && usage.count >= usage.limit)
 
   React.useEffect(() => {
     viewportRef.current?.scrollTo({ top: viewportRef.current.scrollHeight })
@@ -102,16 +110,28 @@ export function ChatPanel({ messages, onSendMessage, onCiteClick }: ChatPanelPro
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     const trimmed = value.trim()
-    if (!trimmed) return
+    if (!trimmed || limitReached) return
     onSendMessage(trimmed)
     setValue("")
   }
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-        <Sparkles className="size-4 text-muted-foreground" />
-        <h2 className="text-sm font-medium">Chat</h2>
+      <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
+        <div className="flex items-center gap-2">
+          <Sparkles className="size-4 text-muted-foreground" />
+          <h2 className="text-sm font-medium">Chat</h2>
+        </div>
+        {usage && !usage.unlimited && (
+          <span
+            className={cn(
+              "text-xs tabular-nums",
+              limitReached ? "font-medium text-red-400" : "text-muted-foreground"
+            )}
+          >
+            {usage.count}/{usage.limit} chats used
+          </span>
+        )}
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
@@ -194,11 +214,16 @@ export function ChatPanel({ messages, onSendMessage, onCiteClick }: ChatPanelPro
               handleSubmit(e)
             }
           }}
-          placeholder="Ask a question about your documents..."
+          disabled={limitReached}
+          placeholder={
+            limitReached
+              ? "Free chat limit reached — contact an admin for unlimited access."
+              : "Ask a question about your documents..."
+          }
           className="min-h-9 resize-none"
           rows={1}
         />
-        <Button type="submit" size="icon" disabled={!value.trim()}>
+        <Button type="submit" size="icon" disabled={!value.trim() || limitReached}>
           <Send />
         </Button>
       </form>

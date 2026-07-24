@@ -623,3 +623,13 @@ Security note that shaped this: an admin account must never be created by
 hardcoding a password into code or config. Clerk owns authentication
 entirely; the admin signs up through Clerk's own form like any other user,
 and the app recognizes their email via an allowlist.
+
+**Chat usage cap ✅ implemented.** `lib/usage/chat-usage.ts` tracks a
+per-user Redis counter (`usage:chatCount:<userId>`, `FREE_CHAT_LIMIT = 10`)
+plus an `unlimited` exemption flag (`usage:unlimited:<userId>`, written by
+the admin dashboard in Phase 17, read here). `POST /api/chat` checks the cap
+before running guardrails and increments unconditionally on every submitted
+query — refused, low-confidence, or successful — so the limit can't be
+gamed by asking disallowed questions. `GET /api/usage` exposes the current
+count for the initial page load. The chat UI surfaces a live "`N/10 chats
+used`" badge and disables input at the limit; unlimited users see neither.

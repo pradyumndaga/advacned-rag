@@ -646,11 +646,43 @@ chat, which was refused and never written anywhere.
 - Added a Vitest case covering `deleteResource` (record removed, dropped
   from its owner's list, unrelated resources untouched).
 
-### Phase 16 — Chat usage cap, 10 free chats (not started)
-- Redis counter per user, incremented on each successful `/api/chat` call.
-- `/api/chat` returns a clear "limit reached" response once the count
-  exceeds 10, unless the user has an `unlimited` flag (see Phase 17).
-- UI: surface remaining chats somewhere in the chat panel.
+### Phase 16 — Chat usage cap, 10 free chats ✅ implemented and verified
+- `lib/usage/chat-usage.ts`: Redis-backed counter, `FREE_CHAT_LIMIT = 10`.
+  `getChatUsage(userId)` reads both `usage:chatCount:<userId>` (`GET`) and
+  `usage:unlimited:<userId>` (`GET`, `"1"` = exempt). `incrementChatUsage`
+  uses `INCR` for atomicity. `setUnlimited(userId, bool)` sets/deletes the
+  flag key — write side is Phase 17's concern (admin dashboard), read side
+  is this phase's.
+- `POST /api/chat`: checks usage *before* running guardrails — if the count
+  is already at/over the limit and the user isn't unlimited, returns
+  `{ limitReached: true, usage }` with a 403, before spending an LLM call.
+  Otherwise increments the counter first, then proceeds. Every submitted
+  query counts against the cap regardless of guardrail outcome (refused,
+  low-confidence, or successful) — this is deliberate: metering "uses of the
+  chat interface," not "successful answers," so the cap can't be gamed by
+  asking disallowed questions for free. `usage` is included in all three
+  response shapes (limit-reached, refused, success).
+- `GET /api/usage`: returns the current user's usage, for the initial page
+  load before any message has been sent.
+- UI (`components/chat/chat-panel.tsx`): header shows a "`{count}/{limit}
+  chats used`" badge (hidden entirely when `unlimited`), turning red/bold at
+  the limit. Input and send button disable at the limit, with the
+  placeholder swapped to "Free chat limit reached — contact an admin for
+  unlimited access."
+  `components/home/home-client.tsx` fetches usage on mount via `GET
+  /api/usage`, updates it from every `/api/chat` response's `usage` field,
+  and on `limitReached` shows a clear assistant message instead of
+  attempting to render pipeline-trace stages that never ran server-side.
+- Verified live: sent a real chat, confirmed the badge incremented
+  `0/10 → 1/10`. Set the real counter to 9 directly in Redis, sent one more
+  message — succeeded and showed `10/10` in red with input/send disabled
+  and the limit placeholder. Set the `unlimited` flag directly in Redis and
+  reloaded — badge disappeared entirely and input re-enabled, confirming
+  unlimited users bypass the cap and the UI. Cleared the test `unlimited`
+  flag and reset the counter back to reflect actual messages sent.
+- Added `lib/usage/chat-usage.test.ts` (fake Redis): fresh user starts at
+  `0/10`/not-unlimited, counter increments and is reflected in
+  `getChatUsage`, no cross-user leakage, `setUnlimited` toggles both ways.
 
 ### Phase 17 — Admin dashboard (not started)
 - Admin allowlist via an `ADMIN_EMAILS` env var (starting value:

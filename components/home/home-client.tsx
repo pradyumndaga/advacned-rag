@@ -3,7 +3,7 @@
 import * as React from "react"
 import { UserButton } from "@clerk/nextjs"
 
-import { ChatPanel, type ChatMessage } from "@/components/chat/chat-panel"
+import { ChatPanel, type ChatMessage, type ChatUsage } from "@/components/chat/chat-panel"
 import { ModeToggle } from "@/components/mode-toggle"
 import {
   TerminalPanel,
@@ -44,6 +44,7 @@ export function HomeClient() {
   const [lines, setLines] = React.useState<TraceLine[]>([])
   const [resourceRefreshSignal, setResourceRefreshSignal] = React.useState(0)
   const [previewTarget, setPreviewTarget] = React.useState<ResourcePreviewTarget | null>(null)
+  const [usage, setUsage] = React.useState<ChatUsage | undefined>(undefined)
   const timeouts = React.useRef<ReturnType<typeof setTimeout>[]>([])
 
   React.useEffect(() => {
@@ -51,6 +52,15 @@ export function HomeClient() {
     return () => {
       pending.forEach(clearTimeout)
     }
+  }, [])
+
+  React.useEffect(() => {
+    fetch("/api/usage")
+      .then((res) => res.json())
+      .then((data: { usage?: ChatUsage }) => {
+        if (data.usage) setUsage(data.usage)
+      })
+      .catch(() => {})
   }, [])
 
   function updateLine(runId: number, stage: string, patch: Partial<TraceLine>) {
@@ -109,6 +119,7 @@ export function HomeClient() {
       refused?: boolean
       reason?: string
       error?: string
+      limitReached?: boolean
       lowConfidence?: boolean
       queryUnderstanding?: { count: number; types: string[] }
       retrieval?: { count: number; sources: string[] }
@@ -116,6 +127,7 @@ export function HomeClient() {
       crag?: { attempts: number; score: number; lowConfidence: boolean }
       outputGuardrail?: { action: "none" | "redacted" | "refused"; reason?: string }
       citations?: Citation[]
+      usage?: ChatUsage
     }
     try {
       res = await fetch("/api/chat", {
@@ -132,6 +144,22 @@ export function HomeClient() {
           id: `${runId}-assistant`,
           role: "assistant",
           content: "Something went wrong reaching the server.",
+        },
+      ])
+      return
+    }
+
+    if (data.usage) setUsage(data.usage)
+
+    if (data.limitReached) {
+      updateLine(runId, guardrailStage, { status: "blocked", detail: "free chat limit reached" })
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `${runId}-assistant`,
+          role: "assistant",
+          content:
+            "You've used all 10 free chats. Contact an admin for unlimited access.",
         },
       ])
       return
@@ -305,6 +333,7 @@ export function HomeClient() {
           <ChatPanel
             messages={messages}
             onSendMessage={handleSendMessage}
+            usage={usage}
             onCiteClick={(citation) =>
               setPreviewTarget({
                 sourceId: citation.sourceId,
