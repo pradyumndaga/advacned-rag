@@ -3,10 +3,21 @@ import { Resource } from "./types"
 
 // A minimal in-memory stand-in for ioredis, implementing only the exact
 // calls resource-store.ts makes (get/set/zadd/zrevrange/mget) — enough to
-// exercise real state transitions without a real Redis instance.
+// exercise real state transitions without a real Redis instance. Keyed
+// properly (unlike a single shared index) so per-user index scoping
+// (resources:index:<userId>) can actually be tested.
 function createFakeRedis() {
   const store = new Map<string, string>()
-  const index = new Map<string, number>() // member -> score
+  const indexes = new Map<string, Map<string, number>>() // key -> (member -> score)
+
+  function getIndex(key: string) {
+    let idx = indexes.get(key)
+    if (!idx) {
+      idx = new Map()
+      indexes.set(key, idx)
+    }
+    return idx
+  }
 
   return {
     async get(key: string) {
@@ -16,14 +27,13 @@ function createFakeRedis() {
       store.set(key, value)
       return "OK"
     },
-    async zadd(...args: [string, number, string]) {
-      const [, score, member] = args
-      index.set(member, score)
+    async zadd(key: string, score: number, member: string) {
+      getIndex(key).set(member, score)
       return 1
     },
-    async zrevrange(...args: [string, number, number]) {
-      void args
-      return [...index.entries()].sort((a, b) => b[1] - a[1]).map(([member]) => member)
+    async zrevrange(key: string, ...rest: [number, number]) {
+      void rest
+      return [...getIndex(key).entries()].sort((a, b) => b[1] - a[1]).map(([member]) => member)
     },
     async mget(keys: string[]) {
       return keys.map((k) => store.get(k) ?? null)
@@ -43,6 +53,7 @@ function makeResource(overrides: Partial<Resource> = {}): Resource {
   const now = Date.now()
   return {
     id: overrides.id ?? "res-1",
+    userId: overrides.userId ?? "user-1",
     kind: "pdf",
     label: "Profile.pdf",
     detail: "48.3 KB",
@@ -99,14 +110,27 @@ describe("resource-store", () => {
     expect(await updateResource("never-created", { status: "ready" })).toBeNull()
   })
 
-  it("lists resources newest-first", async () => {
-    const older = makeResource({ id: "list-older", createdAt: 1000 })
-    const newer = makeResource({ id: "list-newer", createdAt: 2000 })
+  it("lists a user's resources newest-first", async () => {
+    const older = makeResource({ id: "list-older", createdAt: 1000, userId: "list-user-1" })
+    const newer = makeResource({ id: "list-newer", createdAt: 2000, userId: "list-user-1" })
     await createResource(older)
     await createResource(newer)
 
-    const all = await listResources()
+    const all = await listResources("list-user-1")
     const ids = all.map((r) => r.id)
     expect(ids.indexOf("list-newer")).toBeLessThan(ids.indexOf("list-older"))
+  })
+
+  it("isolates resources between users — one user's list never includes another's", async () => {
+    const mine = makeResource({ id: "isolated-mine", userId: "isolated-user-a" })
+    const theirs = makeResource({ id: "isolated-theirs", userId: "isolated-user-b" })
+    await createResource(mine)
+    await createResource(theirs)
+
+    const myList = await listResources("isolated-user-a")
+    const theirList = await listResources("isolated-user-b")
+
+    expect(myList.map((r) => r.id)).toEqual(["isolated-mine"])
+    expect(theirList.map((r) => r.id)).toEqual(["isolated-theirs"])
   })
 })

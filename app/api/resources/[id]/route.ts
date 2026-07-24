@@ -14,7 +14,9 @@ export async function GET(
 
   const { id } = await params
   const resource = await getResource(id)
-  if (!resource) {
+  // Same 404 for "doesn't exist" and "exists but belongs to someone else" —
+  // don't give an unauthorized caller a way to distinguish the two.
+  if (!resource || resource.userId !== userId) {
     return NextResponse.json({ error: "resource not found" }, { status: 404 })
   }
 
@@ -22,6 +24,6 @@ export async function GET(
     return NextResponse.json({ resource, chunks: [] })
   }
 
-  const chunks = await fetchChunksBySource(id)
+  const chunks = await fetchChunksBySource(id, userId)
   return NextResponse.json({ resource, chunks })
 }

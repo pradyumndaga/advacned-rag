@@ -605,12 +605,19 @@ session — `proxy.ts` establishes Clerk's auth context globally, and each
 page/route protects itself individually (`await auth.protect()` for pages,
 a manual `userId` check + 401 for API routes), not a centralized
 middleware-matcher, since that pattern is deprecated in the installed Clerk
-version. See `planning.md`'s "Multi-tenancy & admin" section for the full,
-actively-being-built breakdown: per-user data isolation across Qdrant/Redis
-(§2/§6's `Resource`/chunk shapes gain a `userId`), resource deletion, a
-10-free-chat cap per user, and an admin dashboard that can view usage and
-lift the cap for a user. No billing/payment system — "upgrading" a user
-means removing their chat cap, nothing else.
+version. See `planning.md`'s "Multi-tenancy & admin" section for the full
+breakdown: resource deletion, a 10-free-chat cap per user, and an admin
+dashboard that can view usage and lift the cap for a user. No
+billing/payment system — "upgrading" a user means removing their chat cap,
+nothing else.
+
+**Per-user data isolation ✅ implemented.** Every `Resource` (§2.3) and
+`StoredChunk` carries a `userId`; the Redis resource index and every Qdrant
+query (`searchChunks`, `fetchChunksBySource`) are filtered by it, so a
+signed-in user only ever sees or retrieves against their own ingested
+content. `userId` travels as BullMQ job data through ingestion (the worker
+process has no session of its own to read it from) and as a required field
+on `RetrievalAdapter.retrieve`'s options at query time.
 
 Security note that shaped this: an admin account must never be created by
 hardcoding a password into code or config. Clerk owns authentication

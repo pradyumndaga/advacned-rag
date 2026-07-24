@@ -2,12 +2,12 @@ import { getRedisConnection } from "@/lib/queue/connection"
 import { Resource } from "./types"
 
 const KEY_PREFIX = "resource:"
-const INDEX_KEY = "resources:index"
+const indexKey = (userId: string) => `resources:index:${userId}`
 
 export async function createResource(resource: Resource): Promise<void> {
   const redis = getRedisConnection()
   await redis.set(KEY_PREFIX + resource.id, JSON.stringify(resource))
-  await redis.zadd(INDEX_KEY, resource.createdAt, resource.id)
+  await redis.zadd(indexKey(resource.userId), resource.createdAt, resource.id)
 }
 
 export async function getResource(id: string): Promise<Resource | null> {
@@ -26,9 +26,9 @@ export async function updateResource(
   return updated
 }
 
-export async function listResources(): Promise<Resource[]> {
+export async function listResources(userId: string): Promise<Resource[]> {
   const redis = getRedisConnection()
-  const ids = await redis.zrevrange(INDEX_KEY, 0, -1)
+  const ids = await redis.zrevrange(indexKey(userId), 0, -1)
   if (!ids.length) return []
   const raw = await redis.mget(ids.map((id) => KEY_PREFIX + id))
   return raw.filter((entry): entry is string => Boolean(entry)).map((entry) => JSON.parse(entry) as Resource)

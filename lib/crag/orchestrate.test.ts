@@ -44,7 +44,7 @@ describe("runCragLoop", () => {
       rationale: "great answer",
     })
 
-    const result = await runCragLoop("original query", initialQueries)
+    const result = await runCragLoop("original query", initialQueries, "user_test123")
 
     expect(result.attempts).toBe(1)
     expect(result.lowConfidence).toBe(false)
@@ -59,7 +59,7 @@ describe("runCragLoop", () => {
       .mockResolvedValueOnce({ score: 0.3, relevance: 0.3, groundedness: 0.3, completeness: 0.3, rationale: "missed the point" })
       .mockResolvedValueOnce({ score: 0.8, relevance: 0.8, groundedness: 0.8, completeness: 0.8, rationale: "much better" })
 
-    const result = await runCragLoop("original query", initialQueries)
+    const result = await runCragLoop("original query", initialQueries, "user_test123")
 
     expect(result.attempts).toBe(2)
     expect(result.lowConfidence).toBe(false)
@@ -77,6 +77,9 @@ describe("runCragLoop", () => {
     expect(mockedRetrieve.mock.calls[1][0]).toEqual([
       { type: "keyword-feedback", text: "keyword one keyword two" },
     ])
+    // userId must be threaded through to every retrieval call, not just the first
+    expect(mockedRetrieve.mock.calls[0][1]).toBe("user_test123")
+    expect(mockedRetrieve.mock.calls[1][1]).toBe("user_test123")
   })
 
   it("caps at 3 attempts, skips keyword extraction on the final attempt, and flags low confidence", async () => {
@@ -88,7 +91,7 @@ describe("runCragLoop", () => {
       rationale: "still not grounded",
     })
 
-    const result = await runCragLoop("original query", initialQueries)
+    const result = await runCragLoop("original query", initialQueries, "user_test123")
 
     expect(result.attempts).toBe(3)
     expect(result.lowConfidence).toBe(true)
@@ -110,7 +113,7 @@ describe("runCragLoop", () => {
       .mockResolvedValueOnce("answer 2 (best)")
       .mockResolvedValueOnce("answer 3")
 
-    const result = await runCragLoop("original query", initialQueries)
+    const result = await runCragLoop("original query", initialQueries, "user_test123")
 
     expect(result.attempts).toBe(3)
     expect(result.lowConfidence).toBe(true) // 0.5 is still below the 0.6 threshold

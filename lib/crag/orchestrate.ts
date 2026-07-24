@@ -26,7 +26,8 @@ export interface CragResult {
 // understanding — the original transformed queries already had their shot.
 export async function runCragLoop(
   originalQuery: string,
-  initialQueries: TransformedQuery[]
+  initialQueries: TransformedQuery[],
+  userId: string
 ): Promise<CragResult> {
   const journal: CragJournalEntry[] = []
   let queriesForRetrieval = initialQueries
@@ -40,7 +41,7 @@ export async function runCragLoop(
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     attemptsUsed = attempt
-    const retrievedDocs = await retrieveForQueries(queriesForRetrieval)
+    const retrievedDocs = await retrieveForQueries(queriesForRetrieval, userId)
     const rankedDocs = await rankDocs(originalQuery, retrievedDocs)
     const content = await generateAnswer(originalQuery, rankedDocs)
     const evaluation = await evaluateResponse(originalQuery, rankedDocs, content)

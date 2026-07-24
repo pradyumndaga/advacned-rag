@@ -29,9 +29,14 @@ async function ensureCollection(): Promise<void> {
     })
   }
   // Qdrant Cloud requires an explicit payload index before a field can be
-  // used in a scroll/search filter — fetchChunksBySource filters on this.
+  // used in a scroll/search filter — fetchChunksBySource/searchChunks
+  // filter on both of these (userId enforces per-user data isolation).
   await c.createPayloadIndex(COLLECTION, {
     field_name: "sourceId",
+    field_schema: "keyword",
+  })
+  await c.createPayloadIndex(COLLECTION, {
+    field_name: "userId",
     field_schema: "keyword",
   })
   ensured = true
@@ -50,10 +55,15 @@ export async function upsertChunk(point: ChunkPoint): Promise<void> {
   })
 }
 
-export async function fetchChunksBySource(sourceId: string): Promise<StoredChunk[]> {
+export async function fetchChunksBySource(sourceId: string, userId: string): Promise<StoredChunk[]> {
   await ensureCollection()
   const result = await getClient().scroll(COLLECTION, {
-    filter: { must: [{ key: "sourceId", match: { value: sourceId } }] },
+    filter: {
+      must: [
+        { key: "sourceId", match: { value: sourceId } },
+        { key: "userId", match: { value: userId } },
+      ],
+    },
     limit: 1000,
     with_payload: true,
     with_vector: false,
@@ -70,11 +80,12 @@ export interface ChunkMatch {
   vector: number[]
 }
 
-export async function searchChunks(vector: number[], limit: number): Promise<ChunkMatch[]> {
+export async function searchChunks(vector: number[], limit: number, userId: string): Promise<ChunkMatch[]> {
   await ensureCollection()
   const points = await getClient().search(COLLECTION, {
     vector,
     limit,
+    filter: { must: [{ key: "userId", match: { value: userId } }] },
     with_payload: true,
     with_vector: true, // ranker.ts re-ranks against the original query using these
   })

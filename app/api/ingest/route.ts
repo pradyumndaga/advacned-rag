@@ -76,6 +76,7 @@ export async function POST(request: Request) {
 
   await createResource({
     id: resourceId,
+    userId,
     kind: sourceType,
     label,
     detail,
@@ -86,6 +87,7 @@ export async function POST(request: Request) {
 
   await ingestSourceQueue.add("ingest", {
     resourceId,
+    userId,
     sourceType,
     fileBase64,
     fileName,

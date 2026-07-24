@@ -11,14 +11,14 @@ const ADAPTERS: Partial<Record<string, RetrievalAdapter>> = {
 // (specs.md §5) — the caller (the chat API route) has to synchronously wait
 // for these results before ranking/generation can run, so there's no
 // "fire and forget" benefit a queue would add here.
-export async function retrieveForQueries(queries: TransformedQuery[]): Promise<RetrievedDoc[]> {
+export async function retrieveForQueries(queries: TransformedQuery[], userId: string): Promise<RetrievedDoc[]> {
   const jobs: Promise<RetrievedDoc[]>[] = []
 
   for (const query of queries) {
     for (const target of routeQuery(query)) {
       const adapter = ADAPTERS[target]
       if (!adapter) continue // routed to an adapter that isn't implemented yet
-      jobs.push(adapter.retrieve(query))
+      jobs.push(adapter.retrieve(query, { userId }))
     }
   }
 

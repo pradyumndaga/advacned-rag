@@ -8,6 +8,7 @@ import { SourceType } from "@/lib/ingestion/types"
 
 export interface IngestSourceJobData {
   resourceId: string
+  userId: string
   sourceType: SourceType
   fileBase64?: string
   fileName?: string
@@ -17,6 +18,7 @@ export interface IngestSourceJobData {
 
 export interface IngestChunkJobData {
   resourceId: string
+  userId: string
   sourceType: SourceType
   chunkIndex: number
   text: string
@@ -30,7 +32,7 @@ export interface IngestChunkJobData {
 // chunk gets independent retries instead of losing the whole document over
 // one bad embed call.
 export async function processIngestSource(job: Job<IngestSourceJobData>, token?: string) {
-  const { resourceId, sourceType, fileBase64, fileName, url, chunksQueued } = job.data
+  const { resourceId, userId, sourceType, fileBase64, fileName, url, chunksQueued } = job.data
 
   if (!chunksQueued) {
     await updateResource(resourceId, { status: "processing" })
@@ -54,6 +56,7 @@ export async function processIngestSource(job: Job<IngestSourceJobData>, token?:
     for (const chunk of chunks) {
       const data: IngestChunkJobData = {
         resourceId,
+        userId,
         sourceType,
         chunkIndex: chunk.chunkIndex,
         text: chunk.text,

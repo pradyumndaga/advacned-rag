@@ -25,6 +25,7 @@ export type ResourceStatus = "queued" | "processing" | "ready" | "failed"
 
 export interface Resource {
   id: string
+  userId: string
   kind: SourceType
   label: string
   detail?: string
@@ -36,6 +37,7 @@ export interface Resource {
 
 export interface StoredChunk {
   sourceId: string
+  userId: string
   sourceType: SourceType
   chunkIndex: number
   text: string

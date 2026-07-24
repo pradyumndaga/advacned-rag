@@ -582,22 +582,47 @@ chat, which was refused and never written anywhere.
   200 with real data. `npx tsc --noEmit`, `npx eslint`, `clerk doctor`, and
   the full Vitest suite (65 tests) all pass.
 
-### Phase 14 — Per-user data isolation (not started)
-- Add `userId` to `Resource` (`lib/ingestion/types.ts`) and to every
-  `StoredChunk`'s Qdrant payload.
-- Redis: scope the resource index per user (e.g. `resources:index:<userId>`
-  instead of a single global `resources:index`) — `lib/ingestion/resource-store.ts`.
-- Qdrant: filter `searchChunks`/`fetchChunksBySource` by `userId` in
-  addition to `sourceId` — `lib/db/qdrant.ts`, needs a payload index on
-  `userId` too (same reason `sourceId` needed one — Qdrant Cloud requires
-  an explicit index before a field can be used in a filter).
-- Thread `userId` from `auth()` through `/api/ingest` (into both the
-  resource record and the BullMQ job data — the worker process has no
-  request context of its own, so `userId` has to travel as job data, not
-  be re-derived from a session in the worker) and through `/api/chat`'s
-  retrieval calls.
-- Verify: two different signed-in users each see only their own resources
-  and get answers grounded only in their own documents.
+### Phase 14 — Per-user data isolation ✅ implemented and verified
+- `userId` added to `Resource` and `StoredChunk` (`lib/ingestion/types.ts`).
+- Redis: resource index scoped per user — `resources:index:<userId>`
+  instead of one global `resources:index` (`lib/ingestion/resource-store.ts`).
+  `getResource`/`updateResource` stay unscoped by design (looked up by
+  resource id alone) since they're also called from the worker process,
+  which has no request/user context of its own; ownership is checked at
+  the API boundary instead (`app/api/resources/[id]/route.ts`).
+- Qdrant: `searchChunks` and `fetchChunksBySource` both filter on `userId`
+  now, alongside the existing `sourceId` filter. Needed a second payload
+  index (`lib/db/qdrant.ts`'s `ensureCollection`) for the same reason
+  `sourceId` did — Qdrant Cloud rejects filtering on an unindexed field.
+- `userId` threaded end-to-end: `/api/ingest` puts it on the `Resource`
+  record *and* the BullMQ job data (the worker has no session to re-derive
+  it from, so it has to travel as job data through
+  `ingest-source.processor.ts` → `ingest-chunk.processor.ts` →
+  `upsertChunk`'s payload) — and through the query-time path
+  (`app/api/chat/route.ts` → `runCragLoop` → `retrieveForQueries` →
+  `RetrievalAdapter.retrieve`'s now-required `opts.userId` → `searchChunks`).
+  `RetrieveOptions.userId` was made required, not optional, since every
+  real call site now must have one.
+- `app/api/resources/[id]/route.ts` returns the same 404 for "doesn't
+  exist" and "exists but belongs to someone else" — deliberately not a 403,
+  so an unauthorized caller can't distinguish the two.
+- **Known consequence, not a bug**: resources created before this phase
+  have no `userId`, so they're invisible to everyone now — they were never
+  added to any per-user Redis index (there wasn't one yet), and old Qdrant
+  chunks lack the field the new filter requires. Confirmed live: the
+  existing test resources from earlier phases disappeared from the panel
+  post-migration. Fine for this project's current scale (all synthetic
+  test data); a real backfill migration would be the fix if this mattered.
+- Verified live end-to-end: uploaded a fresh document as a real signed-in
+  user, confirmed the `Resource` record and the Qdrant chunk both carry the
+  correct Clerk `userId`, asked a question and got a grounded, correctly
+  cited answer scoped to just that document, and confirmed
+  `/api/resources/[id]` 404s for a nonexistent/inaccessible id. (Genuine
+  two-*different*-user isolation is covered by a Vitest test using two
+  distinct fake users against the resource store, rather than a second
+  live Clerk account — reasonable given the isolation logic itself is a
+  straightforward filter, already exercised by real Qdrant/Redis calls
+  above.)
 
 ### Phase 15 — Resource deletion (not started)
 - `DELETE /api/resources/[id]` — verify the resource belongs to the

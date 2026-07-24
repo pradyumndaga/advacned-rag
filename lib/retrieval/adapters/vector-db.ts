@@ -7,12 +7,12 @@ const DEFAULT_TOP_K = 5
 
 export const vectorDbAdapter: RetrievalAdapter = {
   name: "vector",
-  async retrieve(query: TransformedQuery, opts: RetrieveOptions = {}): Promise<RetrievedDoc[]> {
+  async retrieve(query: TransformedQuery, opts: RetrieveOptions): Promise<RetrievedDoc[]> {
     // HyDE already produces an embedding of its hypothetical passage — reuse
     // it instead of re-embedding, since that embedding *is* the query vector
     // HyDE is designed to search with.
     const vector = query.embedding ?? (await openAIEmbed(query.text))
-    const matches = await searchChunks(vector, opts.topK ?? DEFAULT_TOP_K)
+    const matches = await searchChunks(vector, opts.topK ?? DEFAULT_TOP_K, opts.userId)
 
     return matches.map((match) => ({
       id: match.id,

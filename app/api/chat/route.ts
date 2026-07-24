@@ -26,7 +26,7 @@ export async function POST(request: Request) {
   }
 
   const transformedQueries = await transformQuery(query);
-  const crag = await runCragLoop(query, transformedQueries);
+  const crag = await runCragLoop(query, transformedQueries, userId);
   const outputGuard = await outputGuardRails(crag.content);
 
   // Every ranked doc from the winning attempt gets a citation entry, numbered
