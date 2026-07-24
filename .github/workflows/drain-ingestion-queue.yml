@@ -1,0 +1,33 @@
+name: Drain ingestion queue
+
+# Stands in for a real always-on BullMQ worker (see README "Deploying") —
+# Vercel can't host a persistent worker process, and this is the free
+# alternative: run workers/drain.ts on a schedule instead of forever.
+# GitHub Actions' shortest reliable schedule interval is 5 minutes, so a
+# newly-added source can take up to ~5-10 minutes to finish ingesting.
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  drain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      - run: npm run worker:drain
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
+          QDRANT_DB: ${{ secrets.QDRANT_DB }}
+          QDRANT_COLLECTION: ${{ secrets.QDRANT_COLLECTION }}

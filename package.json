@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "worker": "tsx watch workers/index.ts",
+    "worker:drain": "tsx workers/drain.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

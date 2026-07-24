@@ -109,6 +109,57 @@ npm run start   # run a production build (still needs npm run worker alongside i
 npm run lint    # ESLint
 ```
 
+## Deploying
+
+The Next.js app deploys to Vercel as-is (verified: `npm run build` succeeds
+unmodified). The one thing that **can't** move to Vercel is the BullMQ
+worker (`workers/index.ts`) — Vercel's serverless functions are stateless
+and get frozen/killed between requests, so a process that listens
+indefinitely for jobs can't live there. Without a worker running somewhere,
+uploaded sources will sit in "Queued" forever.
+
+This repo uses a **free** stand-in instead of paying for a second always-on
+host: a GitHub Actions workflow
+(`.github/workflows/drain-ingestion-queue.yml`) runs every 5 minutes,
+processes whatever's currently queued via `npm run worker:drain`
+(`workers/drain.ts` — same processors as `workers/index.ts`, but it exits
+once both queues have gone idle for ~15s instead of running forever), then
+stops. The tradeoff: a newly-added source can take up to roughly 5-10
+minutes to finish ingesting instead of a few seconds, since GitHub Actions'
+shortest reliable schedule interval is 5 minutes (and even that isn't
+perfectly precise — see the
+[GitHub Actions docs on `schedule`](https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#schedule)).
+If that latency isn't acceptable, run `npm run worker` on any always-on
+host instead (a small VPS, an Oracle Cloud/GCP "always free" VM, etc.) and
+skip the workflow.
+
+### 1. Deploy the app to Vercel
+
+1. Push this repo to GitHub (already done if you're reading this from the
+   repo).
+2. In the [Vercel dashboard](https://vercel.com/new), import the repo.
+   Framework preset auto-detects as Next.js — no build settings to change.
+3. Add the same environment variables from `.env.local` under
+   **Settings → Environment Variables**: `OPENAI_API_KEY`, `REDIS_URL`,
+   `QDRANT_API_KEY`, `QDRANT_DB`, and optionally `QDRANT_COLLECTION`.
+4. Deploy. `REDIS_URL` and `QDRANT_DB` need to point at instances reachable
+   from the public internet (Redis Cloud and Qdrant Cloud both are) — a
+   Redis running on `localhost` won't be reachable from Vercel.
+
+### 2. Set up the ingestion workflow
+
+1. In the GitHub repo, go to **Settings → Secrets and variables → Actions**
+   and add the same values as repo secrets: `OPENAI_API_KEY`, `REDIS_URL`,
+   `QDRANT_API_KEY`, `QDRANT_DB`, `QDRANT_COLLECTION` (optional).
+2. That's it — `.github/workflows/drain-ingestion-queue.yml` starts running
+   on its 5-minute schedule automatically once the secrets exist. You can
+   also trigger it manually from the **Actions** tab (the workflow has a
+   `workflow_dispatch` trigger) to test it or to process a queued source
+   immediately instead of waiting for the next scheduled run.
+3. GitHub disables scheduled workflows automatically after 60 days with no
+   commits to the repo — push occasionally, or re-enable it manually from
+   the Actions tab if that happens.
+
 ## Known limitations
 
 - Only the vector-DB retrieval adapter is implemented (keyword/SQL/graph

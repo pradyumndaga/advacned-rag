@@ -479,19 +479,32 @@ the whole repo including the new test files.
   ingestion or remove a resource from the panel without going to Redis
   directly. Revisit if that friction shows up in practice.
 
+## Deployment ✅ implemented (Vercel, env-held credentials, no BYOK)
+See `specs.md` §0.1 for the full writeup. Summary:
+- App deploys to Vercel unmodified (`npm run build` verified clean).
+- `workers/drain.ts` + `.github/workflows/drain-ingestion-queue.yml`: a
+  free stand-in for the always-on worker Vercel can't host — a GitHub
+  Actions cron (every 5 min, the shortest reliable interval GitHub
+  supports) runs the same ingestion processors once per invocation instead
+  of forever, draining whatever's queued and exiting once idle. Verified
+  locally against the real queue (both the "something queued" and "nothing
+  queued" paths). Accepted tradeoff: ingestion latency goes from seconds to
+  roughly 5-10 minutes.
+- `npm run worker` (the original always-on process) still works unchanged
+  for local dev, and remains a straightforward upgrade path later if a real
+  always-on host is worth paying for.
+
 ## Future direction (deferred — not being built yet)
 Current priority is learning/building the pipeline end-to-end; the following
 is where the project may head afterward, not active scope. Captured here (and
-in `specs.md` §0) so it isn't lost, but nothing below should block or shape
+in `specs.md` §0.2) so it isn't lost, but nothing below should block or shape
 current work:
-- Deploy on Vercel; move to fully BYOK credentials (LLM key + vector-DB
-  credentials) entered client-side and kept in `localStorage`, never
-  server-persisted.
-- Worker/queue model rework: BullMQ's standalone worker process (as scoped in
-  this doc's folder structure) can't run on Vercel's stateless functions.
-  Would need either inline orchestration (current approach) to keep scaling,
-  or a serverless-native job runner (Inngest, Trigger.dev, Vercel background
-  functions).
+- Move to fully BYOK credentials (LLM key + vector-DB credentials) entered
+  client-side and kept in `localStorage`, never server-persisted. The
+  GitHub Actions drain-workflow above solves "no long-running worker" for
+  the current single-operator deployment, but doesn't generalize to BYOK —
+  there's no single shared Redis/Qdrant to poll once every visitor has
+  their own credentials.
 - `lib/llm/providers/openai.ts`'s client moving from a process-env-keyed
   singleton to a per-request client built from a visitor-supplied key.
 

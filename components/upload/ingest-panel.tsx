@@ -6,6 +6,7 @@ import {
   FileCode2,
   FileText,
   Globe,
+  Info,
   Loader2,
   PlayCircle,
 } from "lucide-react"
@@ -261,6 +262,13 @@ export function IngestPanel({ onIngested }: IngestPanelProps) {
           )
         })}
       </div>
+
+      <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground/70">
+        <Info className="size-3 shrink-0" />
+        New sources process in the background — this can take anywhere from
+        a few seconds to several minutes depending on how ingestion is
+        deployed, so a source sitting in Queued is expected, not stuck.
+      </p>
 
       {activeUrlType && (
         <div className="flex flex-col gap-2 rounded-xl border border-border px-4 py-4">

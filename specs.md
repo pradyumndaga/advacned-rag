@@ -4,14 +4,39 @@ Technical specification for the retrieval-augmented generation system this
 app implements. Pair this with `planning.md` (phased build order) and
 `AGENTS.md` (how the agent must work while building it).
 
-## 0. Deployment target & credential model (future direction, not current)
+## 0. Deployment target & credential model
 
-Primary goal right now is learning/building the pipeline end-to-end; this
-section is where the project is headed eventually, not a constraint on the
-current build. Until this is revisited explicitly, keep using a single
-env-held API key per provider (`OPENAI_API_KEY`, and similarly for whichever
-vector-DB SDK gets added), same pattern as every other credential in the repo
-today — no per-request/BYOK plumbing yet.
+### 0.1 Current: Vercel, env-held credentials, no BYOK ✅ implemented
+
+The app is deployed on Vercel using the same single env-held API key per
+provider it's used since local dev (`OPENAI_API_KEY`, `QDRANT_API_KEY`,
+`QDRANT_DB`, `REDIS_URL`) — no BYOK, no per-request credential threading.
+`npm run build` succeeds completely unmodified for this; the only real
+obstacle was the one §0.2 already flagged as unresolved:
+
+- **No long-running worker process on Vercel** — solved for free rather
+  than by adding a paid always-on host or rewriting the queue away. A
+  GitHub Actions workflow (`.github/workflows/drain-ingestion-queue.yml`,
+  cron `*/5 * * * *`) runs `npm run worker:drain` (`workers/drain.ts`) on a
+  schedule instead of running `workers/index.ts` forever: it processes
+  whatever's currently queued across `ingest-source`/`ingest-chunk`, then
+  exits once both queues go idle for ~15s (with a 4-minute hard cap as a
+  safety net). Same processor functions as the real worker — this is a
+  one-shot invocation of the same logic, not a rewrite. Verified locally
+  against the real queue: a job left queued while no worker was running
+  was picked up, processed to `ready`, and the script exited cleanly, both
+  for the "something queued" and "nothing queued" cases.
+- Tradeoff accepted: ingestion latency goes from a few seconds to roughly
+  5-10 minutes (GitHub Actions' schedule trigger has a 5-minute floor and
+  isn't perfectly precise even at that). Acceptable for this project's
+  current scale; a real always-on worker host remains a straightforward
+  upgrade path (point `npm run worker` at the same env vars, drop the
+  workflow) if that latency stops being acceptable.
+
+### 0.2 Further future direction: full BYOK (not current)
+
+Everything below this point is where the project *could* go beyond §0.1,
+not a constraint on the current build — §0.1 is what's actually deployed.
 
 Eventual target: deploy on Vercel — Next.js API routes run as stateless,
 ephemeral serverless functions. That constrains several of the sections
@@ -35,15 +60,18 @@ below, once we get there:
   document index.
 - **No long-running worker process.** Serverless functions can't host a
   persistent BullMQ worker (`workers/index.ts` per `planning.md`'s proposed
-  structure assumes a standalone long-running process). Either the pipeline
-  stays orchestrated inline within the request/response cycle (as it is
-  today, without a queue), or a serverless-compatible job runner (e.g.
-  Vercel-native background functions, Inngest, Trigger.dev) replaces BullMQ.
-  Unresolved — see `planning.md`'s open decisions.
-- **Ingestion accepts URLs, not just file upload.** The existing PDF dropzone
-  UI needs a URL-based ingestion path alongside (or instead of) file upload,
-  since visitors are pointing the app at content to index, not necessarily
-  uploading local files.
+  structure assumes a standalone long-running process). §0.1's GitHub
+  Actions drain-workflow solves this for the *current* single-operator,
+  shared-credential deployment, but doesn't generalize to full BYOK — there
+  each visitor has their own Redis/Qdrant, so a single scheduled workflow
+  polling one set of credentials no longer makes sense. Either the pipeline
+  stays orchestrated inline within the request/response cycle, or a
+  serverless-compatible job runner (e.g. Vercel-native background
+  functions, Inngest, Trigger.dev) replaces BullMQ. Still unresolved for
+  the full-BYOK case — see `planning.md`'s open decisions.
+- ~~Ingestion accepts URLs, not just file upload~~ — resolved independent
+  of BYOK, back in Phase 4 (§2): YouTube and web page URL ingestion already
+  work today, no per-visitor credential model required for that part.
 
 ## 1. High-level pipeline (query-time)
 
@@ -333,7 +361,7 @@ real data of those shapes to query — building them now against no data
 would be exactly the kind of speculative work `AGENTS.md` §4 rules out.
 
 For now, adapters read their DB credentials from `process.env`, same pattern
-as `lib/llm/providers/openai.ts` today. (Future direction per §0: BYOK,
+as `lib/llm/providers/openai.ts` today. (Future direction per §0.2: BYOK,
 credentials threaded per-request instead — not yet.)
 
 Adapters run in parallel per routed query, fanned out in-process via
@@ -399,7 +427,7 @@ interface LLMProvider {
 `lib/llm/router.ts` selects provider + tier per call; providers are pluggable
 (OpenAI, Anthropic, local, etc.) behind this interface so no call site depends
 on a specific vendor SDK. For now, keys come from `process.env`, same as the
-rest of the repo. (Future direction per §0: per-request BYOK — not yet.)
+rest of the repo. (Future direction per §0.2: per-request BYOK — not yet.)
 
 ### 4.8 CRAG evaluation (`lib/crag/evaluate.ts`)
 Mini model (`gpt-4o-mini`) scores the generated response against `{ original
